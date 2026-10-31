@@ -397,7 +397,8 @@ export function pullsClient({ api, tokens }: { api: string; tokens: TokenSource 
           permissions: z.object({ push: z.boolean().optional() }).optional(),
         })
         .parse(json);
-      return { method: mergeMethodOf(flags), canPush: flags.permissions?.push !== false };
+      const contents = await tokens.contents?.(repo);
+      return { method: mergeMethodOf(flags), canPush: contents ? contents === "write" : flags.permissions?.push !== false };
     },
 
     /** The commit's checks with the names of those that failed, Bugbot's run aside. */

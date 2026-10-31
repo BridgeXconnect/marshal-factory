@@ -79,8 +79,11 @@ const stub = await serve(0, async (request) => {
     if (/^\/repos\/o\/(r|s|flaky)\/installation$/.test(url.pathname) && jwtOk()) return Response.json({ id: 7 });
     if (url.pathname === "/app/installations/7/access_tokens" && request.method === "POST" && jwtOk()) {
       mints++;
-      return Response.json({ token: `ghs_stub${mints}`, expires_at: new Date(nowMs + 3_600_000).toISOString() }, { status: 201 });
+      const contents = body?.repositories?.[0] === "s" ? "read" : "write";
+      return Response.json({ token: `ghs_stub${mints}`, expires_at: new Date(nowMs + 3_600_000).toISOString(), permissions: { contents, metadata: "read" } }, { status: 201 });
     }
+    // GitHub's own answer to an installation token: every collaborator permission false.
+    if (/^\/repos\/o\/(r|s)$/.test(url.pathname)) return Response.json({ allow_squash_merge: true, permissions: { admin: false, push: false, pull: false } });
     if (url.pathname === "/repos/o/r/pulls" && url.searchParams.get("head") === "o:factory/FAC-1" && url.searchParams.get("state") === "all") {
       return Response.json([pulls[3], { ...pulls[2], state: "closed", closed_at: "2026-10-23T09:00:00Z" }]);
     }
@@ -146,6 +149,8 @@ try {
   assert.deepEqual([mints, await tokens.get("o/r")], [6, "ghs_stub6"], "with one fresh mint that replaces the refused token");
   await assert.rejects(live.pullRequest("https://github.com/o/r/pull/6"), /answered 401: Bad credentials/, "a second 401 throws");
   assert.equal(mints, 7, "after exactly one more mint");
+  assert.equal((await live.repoMerging("o/r")).canPush, true, "a token minted with contents write may push, though the repo reports push false");
+  assert.equal((await live.repoMerging("o/s")).canPush, false, "a token minted with contents read may not");
 
   const client = pullsClient({ api, tokens: { get: async () => "ghs_stub", evict: () => {} } });
   const url = (n: number) => `https://github.com/o/r/pull/${n}`;
@@ -214,7 +219,7 @@ async function setupScriptEndToEnd(api: string) {
     ) as Record<string, unknown>;
     assert.deepEqual(
       [manifest.name, manifest.public, manifest.hook_attributes, manifest.redirect_url, manifest.setup_url, manifest.default_events],
-      ["marshal-factory-ski043", false, { url: "https://ingest.invalid/webhooks/github", active: true }, `${base}/callback`, `${base}/installed`, ["pull_request", "pull_request_review", "push", "issues"]],
+      ["bridgex-os", false, { url: "https://ingest.invalid/webhooks/github", active: true }, `${base}/callback`, `${base}/installed`, ["pull_request", "pull_request_review", "push", "issues"]],
     );
     assert.deepEqual(manifest.default_permissions, { metadata: "read", contents: "write", pull_requests: "write", checks: "write", issues: "write", statuses: "read" });
 

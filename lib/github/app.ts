@@ -93,7 +93,7 @@ export async function githubRequest(
 }
 
 const installationSchema = z.object({ id: z.number().int() });
-const tokenSchema = z.object({ token: z.string(), expires_at: z.string() });
+const tokenSchema = z.object({ token: z.string(), expires_at: z.string(), permissions: z.record(z.string(), z.string()).optional() });
 const REFRESH_BEFORE_MS = 5 * 60_000;
 
 export function tokenSource({
@@ -110,7 +110,7 @@ export function tokenSource({
   /** A cached token with less life left than this is minted again. */
   refreshBeforeMs?: number;
 }) {
-  const tokens = new Map<RepoName, { token: string; expiresAt: number }>();
+  const tokens = new Map<RepoName, { token: string; expiresAt: number; contents?: string }>();
   const minting = new Map<RepoName, Promise<string>>();
 
   async function mint(repo: RepoName) {
@@ -124,7 +124,7 @@ export function tokenSource({
       ).json,
     );
     onMint(repo);
-    return { token: minted.token, expiresAt: Date.parse(minted.expires_at) };
+    return { token: minted.token, expiresAt: Date.parse(minted.expires_at), contents: minted.permissions?.contents };
   }
 
   function get(repo: RepoName): Promise<string> {
@@ -143,15 +143,24 @@ export function tokenSource({
     return pending;
   }
 
+  /**
+   * The contents permission the repo's token was minted with. GitHub reports `permissions.push`
+   * as false for an installation token on every repo endpoint, so this is the only true answer.
+   */
+  async function contents(repo: RepoName): Promise<string | undefined> {
+    await get(repo);
+    return tokens.get(repo)?.contents;
+  }
+
   /** Drops a token GitHub refused, unless a newer one already replaced it. */
   function evict(repo: RepoName, token: string) {
     if (tokens.get(repo)?.token === token) tokens.delete(repo);
   }
 
-  return { get, evict };
+  return { get, evict, contents };
 }
 
-export type TokenSource = ReturnType<typeof tokenSource>;
+export type TokenSource = Pick<ReturnType<typeof tokenSource>, "get" | "evict"> & Partial<Pick<ReturnType<typeof tokenSource>, "contents">>;
 
 const onMint = (repo: RepoName) => console.log(JSON.stringify({ at: new Date().toISOString(), event: `github app token minted for ${repo}` }));
 const liveTokens = tokenSource({ api: GITHUB_API, app: () => appCredentials(), onMint });
@@ -164,6 +173,7 @@ export const installationTokens: TokenSource = {
     return liveTokens.get(repo);
   },
   evict: liveTokens.evict,
+  contents: liveTokens.contents,
 };
 
 export const sandboxTokens: Pick<TokenSource, "get"> = {
