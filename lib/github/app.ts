@@ -39,7 +39,8 @@ export function readAppFile(path = GITHUB_APP_PATH): AppFile {
 export function appCredentials(env: Record<string, string | undefined> = process.env): Pick<AppFile, "client_id" | "pem"> {
   if (env.GITHUB_APP_PRIVATE_KEY) {
     if (!env.GITHUB_APP_ID) throw new Error("GITHUB_APP_PRIVATE_KEY is set but GITHUB_APP_ID is not");
-    return { client_id: env.GITHUB_APP_ID, pem: env.GITHUB_APP_PRIVATE_KEY };
+    // Hosting dashboards often store a pasted key on one line with its newlines escaped.
+    return { client_id: env.GITHUB_APP_ID, pem: env.GITHUB_APP_PRIVATE_KEY.replace(/\\n/g, "\n") };
   }
   return readAppFile();
 }
