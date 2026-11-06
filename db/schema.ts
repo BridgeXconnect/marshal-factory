@@ -26,6 +26,7 @@ import type { NotifyKind, SlackMessageState } from "../lib/slack";
 import type { JobId, JobSource } from "../lib/sources/shapes";
 import type { StopRecord } from "../lib/stop";
 import type { TicketRecord } from "../lib/ticket-overrides";
+import type { UsageLimit } from "../lib/usage-limit";
 
 // Keys equal column names: the Neon Realtime Drizzle adapter requires it.
 // Token counters are float8 because int8 and numeric reach live subscribers as strings.
@@ -151,6 +152,8 @@ export const jobs = pgTable(
     /** When the watchdog nudged a stuck run, and in which stage; cleared once the stage moves on. */
     nudged_at: ts("nudged_at"),
     nudged_stage: runStage("nudged_stage"),
+    /** The attempt's latest usage-limit pause: the thread sleeps until the limit resets; see lib/usage-limit.ts. */
+    usage_limit: jsonb("usage_limit").$type<UsageLimit>(),
     /** The thread a stop message reached; a stop recorded before the thread was known waits for it. */
     stop_sent_to: text("stop_sent_to"),
     /** The stop recorded for this attempt. A later stage, such as a merge, leaves it, so an owed stop is still sent. */

@@ -31,6 +31,8 @@ import { leaseSlot, teardownSandbox } from "./lifecycle";
 import { confirmStops, stopDelivered } from "./stops";
 import { postEvent } from "./ingest-client";
 import { recordCodexUsage } from "./codex-usage";
+import { pauseForLimit, resumeIfDue } from "./usage-limit";
+import { activePause, resumedAt } from "../lib/usage-limit";
 
 export { ingestClient, postEvent } from "./ingest-client";
 import { threads } from "./threads";
@@ -253,17 +255,29 @@ export async function watchdog() {
   const actions: string[] = [];
   const drivers = harnessDrivers();
   for (const { job, lastEventAt } of working) {
-    // Only pr and waiting jobs hibernate; looking must never wake one.
-    if (isHibernated(job)) continue;
     const now = new Date();
+    // A run its usage limit paused is not stuck: it sleeps, maybe hibernated, until the limit resets.
+    if (activePause(job)) {
+      const resumed = await resumeIfDue(job, now);
+      if (resumed) actions.push(`${job.key}:usage-limit-${resumed}`);
+      continue;
+    }
+    // Only pr and waiting jobs, and paused ones, hibernate; looking must never wake one.
+    if (isHibernated(job)) continue;
     const host = hosts.forJob(job);
+    const thread = await threads.read(job.t3_thread_id, host);
+    if (thread.limitedUntil && thread.limitedUntil > now) {
+      if (await pauseForLimit(job, thread.limitedUntil, now)) actions.push(`${job.key}:usage-limit-paused`);
+      continue;
+    }
+    const resumed = resumedAt(job);
     const action = watch(
       {
         stage: job.stage,
-        lastEventAt: lastEventAt ?? job.updated_at,
+        lastEventAt: new Date(Math.max((lastEventAt ?? job.updated_at).getTime(), resumed?.getTime() ?? 0)),
         nudgedAt: job.nudged_at,
         nudgedStage: job.nudged_stage,
-        thread: await threads.state(job.t3_thread_id, host),
+        thread: thread.state,
         tracked: jobTracked(job, drivers),
         now,
       },

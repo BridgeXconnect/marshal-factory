@@ -209,7 +209,7 @@ try {
   };
   assert.deepEqual(
     await realThreads.read("mcp:odd", odd),
-    { state: "stopped", status: null, lastMessage: "done" },
+    { state: "stopped", status: null, lastMessage: "done", limitedUntil: null },
     "nulls and unexpected message shapes from T3 never throw",
   );
   calls.length = 0;

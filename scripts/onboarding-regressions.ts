@@ -179,7 +179,7 @@ runner.onboardingRuntime.committedRecipe = async (repo) => committed[repo] ?? nu
 const bugbotOn = new Set<string>();
 runner.onboardingRuntime.bugbotRan = async (prUrl) => bugbotOn.has(prUrl);
 let threadState: "running" | "stopped" = "running";
-threads.read = async () => ({ state: threadState, status: null, lastMessage: "I wrote the recipe." });
+threads.read = async () => ({ state: threadState, status: null, lastMessage: "I wrote the recipe.", limitedUntil: null });
 fake.answer = (sandbox, argv) => {
   const line = argv.join(" ");
   if (argv[0] === "rm") {

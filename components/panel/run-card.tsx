@@ -15,7 +15,7 @@ import { formatUsd, runCost, runTitle, shortId } from "./format";
 import { jobsHref } from "./job-view";
 import { decisionLine } from "./merge-decision";
 import { ModelChip } from "./model-chip";
-import { Time } from "./time";
+import { ShortTime, Time } from "./time";
 
 const cardClass = (selected: boolean) =>
   cn(
@@ -150,6 +150,11 @@ export function StageCard({
       {showsDecision(card) && <MergeLine decision={card.mergeDecision} />}
       {card.evidence && <EvidenceLine line={card.evidence} />}
       {card.stop && <StopLine view={card.stop.view} t3Href={t3Href} />}
+      {card.pausedUntil && (
+        <p className="text-xs text-muted-foreground">
+          Paused · usage limit · resumes <ShortTime date={card.pausedUntil} />
+        </p>
+      )}
       {card.nudgedAt && (
         <p className="text-xs text-warning">
           Stuck · nudged <Time date={card.nudgedAt} />

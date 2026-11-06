@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { and, eq, inArray, isNotNull, isNull, lt, or, sql, type SQL } from "drizzle-orm";
+import { and, eq, inArray, isNotNull, isNull, lt, notInArray, or, sql, type SQL } from "drizzle-orm";
 import { db } from "../db/client";
 import { auditLog, codexSlotLeases, jobs, repoSettings, type JobRow } from "../db/schema";
 import type { RepoName } from "../lib/github/app";
@@ -11,6 +11,7 @@ import { readSettings, resolveExecution } from "../lib/settings";
 import type { JobId } from "../lib/sources/shapes";
 import { parseStop } from "../lib/stop";
 import { HIBERNATED_MESSAGE, type PairingResult } from "../lib/t3-pairing";
+import { activePause } from "../lib/usage-limit";
 import { bindingOf, PENDING, stopOwed, stopping } from "./binding";
 import { recordJobCodexUsage } from "./codex-usage";
 import { config } from "./config";
@@ -25,10 +26,12 @@ import { verifyingKeys } from "./verify";
 // runs, idle or not, so a job that waits on the outside world gives its sandbox up:
 //
 //   running     sandbox_id set; the thread works, or waits in pr or waiting until it settles
-//   hibernated  pr or waiting, thread settled: the login is written back, the filesystem (worktree,
-//               T3's SQLite, Codex sessions) is snapshotted to sandbox_snapshot, the sandbox ends
-//               and the login slot, if the job holds one, is freed
-//   woken       an operation that must reach the thread (conflict send-back, answer delivery)
+//   hibernated  pr or waiting, thread settled, or paused by a usage limit (lib/usage-limit.ts): the
+//               login is written back, the filesystem (worktree, T3's SQLite, Codex sessions) is
+//               snapshotted to sandbox_snapshot, the sandbox ends and the login slot, if the job
+//               holds one, is freed
+//   woken       an operation that must reach the thread (conflict send-back, answer delivery,
+//               resuming after the usage limit reset)
 //               starts a sandbox from the snapshot with a freshly leased slot (Codex threads only), a fresh GitHub token
 //               and a new `t3 serve`; the snapshot is deleted once it serves
 //   torn down   merged or failed: the login is written back, the sandbox ends, the snapshot is
@@ -296,21 +299,36 @@ export async function settleInterrupted() {
 
 /**
  * Snapshots and ends the sandbox of each job that waits in pr or waiting with a settled thread,
- * after hibernateAfterMinutes. A stop still owed is delivered first. A thread already gone has
- * nothing worth keeping: its sandbox ends and its slot is freed, and sandbox_id stays so the job
- * keeps reading as gone.
+ * after hibernateAfterMinutes, and of each job a usage limit paused for longer than that. A stop
+ * still owed is delivered first. A thread already gone has nothing worth keeping: its sandbox ends
+ * and its slot is freed, and sandbox_id stays so the job keeps reading as gone.
  */
 export async function hibernateIdle(now = Date.now()) {
   const graceMs = config.factory.sandbox.hibernateAfterMinutes * 60_000;
   const rows = await db
     .select()
     .from(jobs)
-    .where(and(await mine(), inArray(jobs.stage, [...HIBERNATE_STAGES]), isNotNull(jobs.sandbox_id), isNull(jobs.sandbox_snapshot), isNotNull(jobs.t3_thread_id), notPending));
+    .where(
+      and(
+        await mine(),
+        or(inArray(jobs.stage, [...HIBERNATE_STAGES]), and(isNotNull(jobs.usage_limit), notInArray(jobs.stage, [...TERMINAL_STAGES]))),
+        isNotNull(jobs.sandbox_id),
+        isNull(jobs.sandbox_snapshot),
+        isNotNull(jobs.t3_thread_id),
+        notPending,
+      ),
+    );
   const verifying = verifyingKeys();
   return each(rows, async (row) => {
     if (stopOwed(row) || verifying.has(row.key)) return undefined;
-    const quietSince = Math.max(row.stage_at?.getTime() ?? row.updated_at.getTime(), wokenAt.get(row.key) ?? 0);
-    if (now - quietSince < graceMs) return undefined;
+    if (HIBERNATE_STAGES.some((stage) => stage === row.stage)) {
+      const quietSince = Math.max(row.stage_at?.getTime() ?? row.updated_at.getTime(), wokenAt.get(row.key) ?? 0);
+      if (now - quietSince < graceMs) return undefined;
+    } else {
+      // A short pause keeps its sandbox: waking costs more than the minutes it would save.
+      const pause = activePause(row);
+      if (!pause || Date.parse(pause.until) - now < graceMs) return undefined;
+    }
     const sandboxId = row.sandbox_id!;
     const host = modalHost(sandboxId);
     const state = await threads.state(row.t3_thread_id, host);
