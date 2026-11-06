@@ -113,10 +113,17 @@ export function sandboxHarness(harness: HarnessChoice, driver: string, hasClaude
 /** Only a sandbox thread on Codex needs a Codex login slot; Claude Code logs in with the runner's token, in any number of sandboxes. */
 export const needsCodexSlot = (provider: string | null) => provider !== CLAUDE;
 
+/**
+ * A thread its provider's usage limit stopped is snoozed until the limit resets, which is how the
+ * runner tells it from a failure (runner/usage-limit.ts). T3 does not resume it: the runner does.
+ */
+const LIMIT_RECOVERY = { snoozeLimitedThreads: true, autoResumeLimitedThreads: false };
+
 export const t3Settings = (choice: HarnessChoice, hasClaude: boolean) => ({
   defaultModelSelection: { instanceId: choice.provider, model: choice.model },
   textGenerationModelSelection: { instanceId: choice.provider, model: choice.model },
   defaultRuntimeMode: "full-access",
+  ...LIMIT_RECOVERY,
   providerInstances: {
     [CODEX]: { driver: CODEX, enabled: true, config: { binaryPath: "codex", homePath: CODEX_HOME } },
     [CLAUDE]: { driver: CLAUDE, enabled: hasClaude },
@@ -249,7 +256,7 @@ export async function setupSandbox(host: JobHost, setup: SandboxSetup, codexMode
     }
   }
   await host.writeFile(`${CODEX_HOME}/config.toml`, codexConfig(await host.readFile(`${CODEX_HOME}/config.toml`), setup.job && { ...setup.job, repo: setup.repo }));
-  await host.writeFile(`${T3_USERDATA}/settings.json`, json(t3Settings(choice, hasClaude)));
+  await host.writeFile(T3_SETTINGS, json(t3Settings(choice, hasClaude)));
   if (setup.ingest !== null) await writeSecretFile(host, INGEST_CONFIG_PATH, setup.ingest);
   await writeGithubToken(host, setup.githubToken);
   if (setup.warm) await refreshWarmCheckout(host, setup.repo, setup.warm.setup);
@@ -282,15 +289,22 @@ async function wire(host: JobHost) {
 }
 
 const T3_RUNTIME = `${T3_USERDATA}/server-runtime.json`;
+const T3_SETTINGS = `${T3_USERDATA}/settings.json`;
 
 /**
  * Started from an exec, `t3 serve` outlives it. Its log holds a pairing token, so it is never read
  * back. A sandbox woken from a snapshot still has the last server's runtime file, so it goes first.
  * It listens on every interface so the sandbox's encrypted tunnel reaches it; T3 refuses any client
- * that has not paired, so the open port grants nothing without a pairing token.
+ * that has not paired, so the open port grants nothing without a pairing token. A snapshot taken
+ * before the settings snoozed limited threads gets that setting first.
  */
 export async function startT3(host: JobHost) {
   await host.remove(T3_RUNTIME);
+  const settings = await host.readFile(T3_SETTINGS);
+  if (settings !== null) {
+    const current = JSON.parse(settings) as Json;
+    if (current.snoozeLimitedThreads !== true) await host.writeFile(T3_SETTINGS, json({ ...current, ...LIMIT_RECOVERY }));
+  }
   await sh(host, `nohup ${host.t3} serve --host 0.0.0.0 --port ${T3_PORT} ${REPO_DIR} > /work/t3.log 2>&1 &`);
   for (let i = 0; i < 60; i++) {
     if (await host.exists(T3_RUNTIME)) return;

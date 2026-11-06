@@ -4,8 +4,11 @@ import type { ThreadState } from "../lib/watchdog";
 import { bindingOf } from "./binding";
 import { interruptThread, listSubagents, sendMessage, showThread as showCli, type InterruptOutcome, type SubagentThread } from "../lib/t3-client";
 
-/** What `t3 thread show` says about a thread: its state, the status of its last run, and its last assistant message. */
-export type ThreadRead = { state: ThreadState; status: string | null; lastMessage: string | null };
+/**
+ * What `t3 thread show` says about a thread: its state, the status of its last run, its last
+ * assistant message, and, when a usage limit stopped it, when T3 says the limit resets.
+ */
+export type ThreadRead = { state: ThreadState; status: string | null; lastMessage: string | null; limitedUntil: Date | null };
 
 /** The thread as a stop sees it: whether a run is active, and the project its subagent threads are listed under. */
 export type ThreadActivity = { state: ThreadState; activeRunId: string | null; projectId: string | null };
@@ -15,7 +18,7 @@ export type { InterruptOutcome, SubagentThread };
 /** Run statuses that are not over; a subagent thread in one of them still works or waits. */
 export const ACTIVE_RUN_STATUSES = ["preparing", "queued", "starting", "running", "waiting"];
 
-const GONE: ThreadRead = { state: "gone", status: null, lastMessage: null };
+const GONE: ThreadRead = { state: "gone", status: null, lastMessage: null, limitedUntil: null };
 
 const shown = z.object({
   thread: z.object({
@@ -24,6 +27,9 @@ const shown = z.object({
     activeRunId: z.string().nullable(),
     status: z.string().nullish().catch(null),
     projectId: z.string().nullish().catch(null),
+    // T3 snoozes a thread its provider's usage limit stopped until the limit resets (snoozeLimitedThreads).
+    snoozed: z.boolean().nullish().catch(null),
+    snoozedUntil: z.string().nullish().catch(null),
   }),
   messages: z.array(z.unknown()).nullish().catch(null),
 });
@@ -33,7 +39,7 @@ async function showThread(threadId: string | null, host: JobHost): Promise<{ rea
   const gone: { read: ThreadRead; activity: ThreadActivity } = { read: GONE, activity: { state: "gone", activeRunId: null, projectId: null } };
   if (!threadId) return gone;
   // A launch in progress; the runner records the real id or clears the marker.
-  if (bindingOf(threadId) === "pending") return { read: { state: "running", status: null, lastMessage: null }, activity: { state: "running", activeRunId: null, projectId: null } };
+  if (bindingOf(threadId) === "pending") return { read: { state: "running", status: null, lastMessage: null, limitedUntil: null }, activity: { state: "running", activeRunId: null, projectId: null } };
   let raw: unknown;
   try {
     raw = await showCli(host, threadId);
@@ -54,7 +60,14 @@ async function showThread(threadId: string | null, host: JobHost): Promise<{ rea
     const parsed = assistant.safeParse(m);
     return parsed.success ? [parsed.data.text] : [];
   }).at(-1) ?? null;
-  return { read: { state, status: thread.status ?? null, lastMessage }, activity };
+  return { read: { state, status: thread.status ?? null, lastMessage, limitedUntil: limitedUntil(thread) }, activity };
+}
+
+/** When a stopped, snoozed thread wakes: T3 snoozes a thread a usage limit stopped until the limit resets. */
+function limitedUntil(thread: { activeRunId: string | null; snoozed?: boolean | null; snoozedUntil?: string | null }) {
+  if (thread.activeRunId || !thread.snoozed || !thread.snoozedUntil) return null;
+  const until = new Date(thread.snoozedUntil);
+  return Number.isNaN(until.getTime()) ? null : until;
 }
 
 /** How the runner reads and talks to a T3 thread; regressions replace any of them. */

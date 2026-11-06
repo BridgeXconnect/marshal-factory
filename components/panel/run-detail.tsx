@@ -17,7 +17,7 @@ import { sourceLink } from "@/lib/sources/shapes";
 import { parseStop, stopLine, stopView } from "@/lib/stop";
 import { runFeedPath } from "@/lib/run-links";
 import { RUNS_ON_LABELS, ticketRecordSchema } from "@/lib/ticket-overrides";
-import { runsOn } from "./cards";
+import { pausedUntil, runsOn } from "./cards";
 import { AgentTree } from "./agent-tree";
 import { useArchiveAction, type ArchiveAction } from "./archive-action";
 import { EventFeed } from "./event-feed";
@@ -32,7 +32,7 @@ import { OpenSandboxT3, useSandboxT3 } from "./open-sandbox-t3";
 import { SandboxSection } from "./sandbox-section";
 import { useFeed, type Feed } from "./sealed";
 import { StageTimeline } from "./stage-timeline";
-import { Time } from "./time";
+import { ShortTime, Time } from "./time";
 import { STAGE_META } from "./stages";
 
 /** The job's audit feed, read once for both the sandbox's last login check and the audit log. */
@@ -214,6 +214,7 @@ export function RunDetail({
   const sandboxed = job ? sandboxState(job) !== null : false;
   const where = job && runsOn(job);
   const stopThread = job && (parseStop(job.stop)?.thread ?? job.t3_thread_id);
+  const paused = job && pausedUntil(job);
 
   const place = machineName && (where?.kind === "modal" ? `Cloud sandbox via ${machineName}` : `Local · ${machineName}`);
   const spend = jobSpend ? (
@@ -284,6 +285,12 @@ export function RunDetail({
         {job && <TicketOverrides job={job} harnesses={harnesses} />}
       </div>
       {job && <StopBanner job={job} t3Href={stopThread ? t3ThreadLink(stopThread, environmentId) : null} />}
+      {paused && (
+        <div className="mx-4.5 mb-3.5 rounded-lg border px-3 py-2.5 text-xs">
+          <span className="font-semibold">Paused</span> · the harness hit its usage limit. The run
+          sleeps and resumes once the limit resets at <ShortTime date={paused} />.
+        </div>
+      )}
       {job?.nudged_at && job.nudged_stage === job.stage && (
         <div className="mx-4.5 mb-3.5 rounded-lg border border-warning/40 bg-warning/10 px-3 py-2.5 text-xs">
           <span className="font-semibold text-warning">Stuck</span> · the

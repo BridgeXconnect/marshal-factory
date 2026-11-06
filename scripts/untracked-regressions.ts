@@ -44,7 +44,7 @@ const pullStates = new Map<string, Awaited<ReturnType<typeof github.pullRequest>
 github.pullRequest = async (url) => pullStates.get(url) ?? { state: "open", mergeable: "mergeable", headSha: "h", title: "t" };
 const shown = new Map<string, ThreadRead>();
 const read: string[] = [];
-threads.read = async (threadId) => (read.push(threadId!), shown.get(threadId!) ?? { state: "running", status: "running", lastMessage: null });
+threads.read = async (threadId) => (read.push(threadId!), shown.get(threadId!) ?? { state: "running", status: "running", lastMessage: null, limitedUntil: null });
 const sent: { threadId: string; message: string }[] = [];
 threads.send = async (threadId, message) => void sent.push({ threadId, message });
 hosts.wake = async (job) => {
@@ -64,10 +64,10 @@ try {
   prs.set(`factory/${PR}`, { url: prUrl(1), state: "open" });
   prs.set(`factory/${MERGED}`, { url: prUrl(2), state: "merged" });
   prs.set(`factory/${TRACKED}`, { url: prUrl(3), state: "open" });
-  shown.set(`thread-${DONE}`, { state: "stopped", status: "completed", lastMessage: "Done. The token ghs_abcdefghijklmnopqrstuvwxyz0123 did not work, so no PR. Should I use the v2 API?" });
-  shown.set(`thread-${FRESH}`, { state: "stopped", status: "completed", lastMessage: "finished" });
-  shown.set(`thread-${FAILED}`, { state: "stopped", status: "failed", lastMessage: "crashed" });
-  shown.set(`thread-${ASLEEP}`, { state: "stopped", status: "completed", lastMessage: "x" });
+  shown.set(`thread-${DONE}`, { state: "stopped", status: "completed", lastMessage: "Done. The token ghs_abcdefghijklmnopqrstuvwxyz0123 did not work, so no PR. Should I use the v2 API?", limitedUntil: null });
+  shown.set(`thread-${FRESH}`, { state: "stopped", status: "completed", lastMessage: "finished", limitedUntil: null });
+  shown.set(`thread-${FAILED}`, { state: "stopped", status: "failed", lastMessage: "crashed", limitedUntil: null });
+  shown.set(`thread-${ASLEEP}`, { state: "stopped", status: "completed", lastMessage: "x", limitedUntil: null });
 
   // A pass whose events cannot post changes nothing, and the next one posts them once.
   ingestDown = true;
@@ -121,7 +121,7 @@ try {
   assert.ok(sent.some((s) => s.threadId === `thread-${CONFLICT}` && /conflicts with main/.test(s.message)));
   pullStates.set(prUrl(4), { state: "open", mergeable: "mergeable", headSha: "head-d", title: "t" });
   assert.deepEqual(await inferUntracked({ only: [CONFLICT] }), [], "not while the thread may still be starting");
-  shown.set(`thread-${CONFLICT}`, { state: "stopped", status: "completed", lastMessage: "Merged main." });
+  shown.set(`thread-${CONFLICT}`, { state: "stopped", status: "completed", lastMessage: "Merged main.", limitedUntil: null });
   assert.deepEqual(await inferUntracked({ only: [CONFLICT], now: later() }), [`${CONFLICT}:pr`]);
   assert.deepEqual([(await row(CONFLICT)).stage, (await row(CONFLICT)).pr_url], ["pr", prUrl(4)]);
   assert.ok(!lookedUp.includes(`factory/${CONFLICT}`), "a job with a PR is not looked up again");
@@ -134,7 +134,7 @@ try {
   assert.ok(resumed.includes(`${DONE}:sent`), JSON.stringify(resumed));
   assert.equal((await row(DONE)).stage, "queued");
   assert.ok(sent.some((s) => s.threadId === `thread-${DONE}` && s.message.includes("Yes")), "the answer goes to the same thread");
-  shown.set(`thread-${DONE}`, { state: "stopped", status: "interrupted", lastMessage: null });
+  shown.set(`thread-${DONE}`, { state: "stopped", status: "interrupted", lastMessage: null, limitedUntil: null });
   assert.deepEqual(await inferUntracked({ only: [DONE], now: later() }), [`${DONE}:waiting`]);
   const again = await row(DONE);
   assert.equal(again.question, questionFrom(null, "interrupted"), "with a fallback question when it left no message");
@@ -147,7 +147,7 @@ try {
   await ingest(db, [eventSchema.parse({ ...mcpReport, eventId: `abc${stamp}verifying`, at: Date.now(), stage: "verifying", summary: "Running the checks." })]);
   assert.equal((await row(REPORTED)).stage, "verifying");
   prs.set(`factory/${REPORTED}`, { url: prUrl(5), state: "open" });
-  shown.set(`thread-${REPORTED}`, { state: "stopped", status: "completed", lastMessage: "Opened the PR." });
+  shown.set(`thread-${REPORTED}`, { state: "stopped", status: "completed", lastMessage: "Opened the PR.", limitedUntil: null });
   lookedUp.length = 0;
   assert.deepEqual(await inferUntracked({ only: [REPORTED] }), [], "inference does not override a stage reported inside the grace");
   assert.ok(!lookedUp.includes(`factory/${REPORTED}`), "nor looks for its PR yet");

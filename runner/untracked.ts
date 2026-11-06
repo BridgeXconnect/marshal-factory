@@ -11,7 +11,9 @@ import type { Job } from "../lib/sources/types";
 import { causeOf, runnerEventId } from "../lib/stages";
 import { bindingOf } from "./binding";
 import { thisMachine } from "./heartbeat";
+import { activePause, resumedAt } from "../lib/usage-limit";
 import { config, harnessDrivers, IN_FLIGHT, jobTracked, postEvent, postMerged, threads, watchdogFail } from "./ops";
+import { pauseForLimit } from "./usage-limit";
 
 // A harness that runs no factory hooks (Codex, Cursor, ...) reports no usage, and stages only
 // through the factory-report MCP server where it has one, so the runner fills the gaps from what it
@@ -52,7 +54,8 @@ async function post(job: Job, stage: Extract<Stage, "pr" | "waiting">, fields: {
 
 async function inferJob(job: Job, now: number): Promise<string | undefined> {
   // A thread that was just launched, resumed or sent back may not have started its run yet.
-  const quiet = now - (job.stage_at ?? job.updated_at).getTime() >= config.factory.stoppedGraceMinutes * 60_000;
+  const since = Math.max((job.stage_at ?? job.updated_at).getTime(), resumedAt(job)?.getTime() ?? 0);
+  const quiet = now - since >= config.factory.stoppedGraceMinutes * 60_000;
   // A stage the agent reported itself (Codex through the factory-report server) stands until the
   // run has been quiet past the grace, so its own pr report, with its assessment, comes first.
   const reported = job.stage_event_id !== null && causeOf(job.stage_event_id) === "report";
@@ -71,6 +74,10 @@ async function inferJob(job: Job, now: number): Promise<string | undefined> {
   const thread = await threads.read(job.t3_thread_id, hosts.forJob(job));
   // A gone thread is the watchdog's to fail.
   if (thread.state !== "stopped") return undefined;
+  // Its run failed on a usage limit: it sleeps until the limit resets, and the watchdog resumes it.
+  if (thread.limitedUntil && thread.limitedUntil.getTime() > now) {
+    return (await pauseForLimit(job, thread.limitedUntil, new Date(now))) ? "usage-limit-paused" : undefined;
+  }
   const settled = settledAs(thread.status);
   switch (settled) {
     case "failed":
@@ -95,7 +102,8 @@ async function inferJob(job: Job, now: number): Promise<string | undefined> {
 
 /**
  * The timer's pass over this machine's working jobs on untracked harnesses. A hibernated job is
- * never woken for it. Each job on its own, so one GitHub or T3 failure does not hold back the rest.
+ * never woken for it, and a job a usage limit paused is left to the watchdog. Each job on its own,
+ * so one GitHub or T3 failure does not hold back the rest.
  */
 export async function inferUntracked({ now = Date.now(), only }: { now?: number; only?: string[] } = {}) {
   const machine = await thisMachine();
@@ -109,7 +117,7 @@ export async function inferUntracked({ now = Date.now(), only }: { now?: number;
   const done: string[] = [];
   const errors: { key: string; error: string }[] = [];
   for (const job of rows) {
-    if (jobTracked(job, drivers) || bindingOf(job.t3_thread_id) !== "bound" || isHibernated(job)) continue;
+    if (jobTracked(job, drivers) || bindingOf(job.t3_thread_id) !== "bound" || isHibernated(job) || activePause(job)) continue;
     try {
       const outcome = await inferJob(job, now);
       if (outcome) done.push(`${job.key}:${outcome}`);

@@ -10,6 +10,7 @@ import { costKnown } from "@/lib/pricing";
 import { mergeDecisionSchema, type MergeDecision } from "@/lib/merge-decision";
 import { sourceLink, type JobId } from "@/lib/sources/shapes";
 import { parseStop, stopView, type StopView } from "@/lib/stop";
+import { activePause } from "@/lib/usage-limit";
 import { groupBy } from "./format";
 
 /** One board card: a claimed job, or a staged run whose job the factory never claimed. */
@@ -33,6 +34,8 @@ export type BoardCard = {
   attemptRuns: RunRow[];
   /** Set while the watchdog's nudge for the current stage is outstanding. */
   nudgedAt: Date | null;
+  /** When the usage limit that paused the current attempt resets; null unless it sleeps. */
+  pausedUntil: Date | null;
   /** The run the card opens; null while a claimed job has no session yet. */
   latest: RunRow | null;
   runs: RunRow[];
@@ -49,6 +52,12 @@ export type BoardCard = {
   /** The newest change to the job or any of its runs. */
   updatedAt: Date;
 };
+
+/** When the usage limit that paused the job's current attempt resets; null unless it sleeps. */
+export function pausedUntil(job: Pick<JobRow, "attempt" | "usage_limit">) {
+  const pause = activePause(job);
+  return pause ? new Date(pause.until) : null;
+}
 
 /** The T3 environment a machine's inventory names, for links into its T3; null when unknown. */
 export function t3EnvironmentId(machine: Pick<MachineRow, "inventory"> | undefined) {
@@ -153,6 +162,7 @@ export function boardCards(jobs: readonly JobRow[], runs: readonly RunRow[], har
       attempt: job.attempt,
       attemptRuns,
       nudgedAt: job.nudged_stage === job.stage ? job.nudged_at : null,
+      pausedUntil: pausedUntil(job),
       latest: attemptRuns.find((r) => r.session_id === job.session_id) ?? attemptRuns[0] ?? null,
       runs: jobRuns,
       harness: job.provider ? harnessOf(job.provider, attemptRuns) : null,
@@ -189,6 +199,7 @@ export function boardCards(jobs: readonly JobRow[], runs: readonly RunRow[], har
         attempt: 1,
         attemptRuns: sorted,
         nudgedAt: null,
+        pausedUntil: null,
         latest,
         runs: sorted,
         harness: null,
