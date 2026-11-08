@@ -141,6 +141,7 @@ try {
   const w = (needle: string) => argvW.findIndex((a) => a.includes(needle));
   assert.ok(w("codex login status") >= 0 && w("codex login status") < w("t3 serve") && w("rm -rf /root/.t3/userdata/server-runtime.json") < w("t3 serve"), argvW.join(" | "));
   assert.ok(w("t3 serve") < w("t3 thread send thread-H"), "serve before the message");
+  assert.ok(w(`git config --global user.email ${sandboxRuntime.identity().email}`) >= 0 && w("user.email") < w("t3 serve"), "a woken sandbox gets the runner's commit author before T3 serves");
   assert.deepEqual(sbW.spec!.encryptedPorts, [3773], "a woken sandbox declares T3's port as an encrypted tunnel");
   assert.match(argvW[w("t3 serve")]!, /serve --host 0\.0\.0\.0 --port 3773 /, "and T3 listens where the tunnel reaches it");
   assert.match(sbW.execs[w("t3 thread send")]!.input, /conflicts with the default branch/);

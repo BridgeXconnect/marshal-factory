@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { z } from "zod";
+import { commitAuthorSchema } from "./commit-identity";
 import { DEFAULT_MODEL, DEFAULT_PROVIDER } from "./harness";
 import { pricingSchema } from "./pricing";
 import { inTestMode } from "./test-mode";
@@ -107,6 +108,8 @@ export const factorySchema = z
         giveUpAfterMinutes: z.number().positive().default(5),
       })
       .prefault({}),
+    /** The author of the factory's commits; see lib/commit-identity.ts. */
+    commitAuthor: commitAuthorSchema,
     sandbox: sandboxSchema,
   })
   .prefault({});

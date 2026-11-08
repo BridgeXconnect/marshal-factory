@@ -40,6 +40,17 @@ type IntentRow = typeof intents.$inferSelect;
 
 const machine = await thisMachine();
 
+// The author of every factory commit. With no factory.commitAuthor.email, the gh login gives it; a
+// runner that can get neither stops here rather than commit with an address hosts refuse.
+{
+  const { resolveCommitIdentity, setCommitIdentity } = await import("../lib/commit-identity");
+  const { exec } = await import("../lib/exec");
+  const { config } = await import("./config");
+  const author = config.factory.commitAuthor;
+  setCommitIdentity(await resolveCommitIdentity(author, async () => JSON.parse((await exec("gh", ["api", "user"], { timeoutMs: 30_000 })).stdout)));
+  console.log(JSON.stringify({ at: new Date().toISOString(), event: "commit-identity", name: author.name, from: author.email ? "config" : "gh" }));
+}
+
 const log = (event: string, detail: Record<string, unknown> = {}) =>
   console.log(JSON.stringify({ at: new Date().toISOString(), event, ...detail }));
 

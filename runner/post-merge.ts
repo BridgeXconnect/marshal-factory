@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { db } from "../db/client";
 import { jobs } from "../db/schema";
+import { commitIdentity, type CommitIdentity } from "../lib/commit-identity";
 import { installationTokens, type RepoName } from "../lib/github/app";
 import { github, parsePullUrl } from "../lib/github/pulls";
 import { localHost, type JobHost } from "../lib/host";
@@ -26,17 +27,19 @@ export const revertDeps: {
   token: (repo: RepoName) => Promise<string>;
   checkout: (repo: RepoName) => Promise<string | null>;
   dir: string;
+  identity: () => CommitIdentity;
 } = {
   host: localHost,
   token: (repo) => installationTokens.get(repo),
   checkout: async (repo) => (await factoryCheckouts()).get(repo) ?? null,
   dir: tmpdir(),
+  identity: () => commitIdentity(),
 };
 
 const TOKEN_ENV = "FACTORY_GIT_TOKEN";
 /** git asks this helper for the password, so the token lives in the environment and never in argv or a URL. */
 const CREDENTIALS = ["-c", "credential.helper=", "-c", `credential.helper=!f() { test "$1" = get && printf 'username=x-access-token\\npassword=%s\\n' "$${TOKEN_ENV}"; }; f`];
-const IDENTITY = ["-c", "user.name=marshal-factory", "-c", "user.email=marshal-factory@users.noreply.github.com"];
+const identityArgs = ({ name, email }: CommitIdentity) => ["-c", `user.name=${name}`, "-c", `user.email=${email}`];
 const KEEP_MS = 2 * 86_400_000;
 
 const firstLine = (error: unknown) => (error instanceof Error ? error.message : String(error)).split("\n")[0]!;
@@ -71,7 +74,7 @@ export async function revertMerge(prUrl: string, merged: FactoryMerge, failed: r
     const parents = (await git(["rev-list", "--parents", "-n", "1", merged.sha])).split(" ").length - 1;
     const target = merged.method === "rebase" && merged.commits > 1 ? [`${merged.sha}~${merged.commits}..${merged.sha}`] : parents > 1 ? ["-m", "1", merged.sha] : [merged.sha];
     try {
-      await git([...IDENTITY, "revert", "--no-edit", ...target]);
+      await git([...identityArgs(revertDeps.identity()), "revert", "--no-edit", ...target]);
     } catch (error) {
       await git(["revert", "--abort"]).catch(() => "");
       return { ok: false, reason: `git revert failed: ${firstLine(error)}`, url };
