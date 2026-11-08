@@ -2,7 +2,7 @@ import { dirname } from "node:path";
 import { z } from "zod";
 import type { ExecError } from "../lib/exec";
 import type { RepoName } from "../lib/github/app";
-import { HostGoneError, hosts, localHost, type JobHost } from "../lib/host";
+import { defaultBranchRef, HostGoneError, hosts, localHost, type JobHost } from "../lib/host";
 import { terminateSandbox } from "../lib/modal-host";
 import { withPlaybook } from "../lib/playbook";
 import { builtVersions, imageProblem, REPO_DIR } from "../lib/sandbox";
@@ -54,10 +54,11 @@ export function parseThreadId(stdout: string) {
 }
 
 export async function startThread(host: JobHost, repo: string, branch: string, title: string, message: string, { provider, model }: HarnessChoice) {
-  return parseThreadId(await t3Start(host, { project: repo, message, worktree: "origin/main", branch, title, provider, model }));
+  const worktree = await defaultBranchRef(host, repo);
+  return parseThreadId(await t3Start(host, { project: repo, message, worktree, branch, title, provider, model }));
 }
 
-/** T3 prepares the worktree after start returns; wait for it and confirm it sits on fresh origin/main. */
+/** T3 prepares the worktree after start returns; wait for it and confirm it sits on the fresh default branch. */
 async function worktreeHead(threadId: string, host: JobHost) {
   for (let i = 0; i < 30; i++) {
     const { thread } = z
@@ -281,7 +282,7 @@ export async function launchQueued(onWorktree: (check: Record<string, unknown>) 
   ];
 }
 
-/** In this machine's checkout of the job's repo, on a worktree cut from freshly fetched origin/main. */
+/** In this machine's checkout of the job's repo, on a worktree cut from its freshly fetched default branch. */
 async function launchLocal(
   pending: readonly LaunchEntry[],
   checkouts: ReadonlyMap<string, string>,
@@ -294,7 +295,7 @@ async function launchLocal(
   for (const repo of new Set(pending.map((entry) => entry.repo))) {
     const checkout = checkouts.get(repo)!;
     await sh(localHost, "git", ["fetch", "origin", "--prune"], checkout);
-    origins.set(repo, await sh(localHost, "git", ["rev-parse", "origin/main"], checkout));
+    origins.set(repo, await sh(localHost, "git", ["rev-parse", await defaultBranchRef(localHost, checkout)], checkout));
   }
   const launched = await launchEntries(pending, {
     async claim(key, marker) {

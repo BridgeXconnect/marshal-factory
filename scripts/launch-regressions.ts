@@ -1,5 +1,9 @@
 import "./test-guard";
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { eq } from "drizzle-orm";
 import type { ExecOptions } from "../lib/exec";
 import type { JobHost } from "../lib/host";
@@ -164,6 +168,7 @@ try {
     t3: "/sandbox/t3",
     run: async (command, args, options) => {
       calls.push({ command, args, options });
+      if (args[2] === "symbolic-ref") return { stdout: "origin/master\n", stderr: "" };
       if (args[1] === "start") return { stdout: '{"threadId":"mcp:fake"}', stderr: "" };
       if (args[1] === "show" && args[2] === "mcp:gone") throw Object.assign(new Error("exit 1"), { code: 1, stdout: "", stderr: "Thread mcp:gone is no longer available" });
       if (args[1] === "show") return { stdout: JSON.stringify({ thread: shown }), stderr: "" };
@@ -181,13 +186,14 @@ try {
   assert.deepEqual(
     calls,
     [
+      { command: "git", args: ["-C", "/sandbox/repo", "symbolic-ref", "--short", "refs/remotes/origin/HEAD"], options: { timeoutMs: 30_000 } },
       {
         command: "/sandbox/t3",
-        args: ["thread", "start", "/sandbox/repo", "-", "--worktree", "origin/main", "--branch", "factory/FAC-1", "--title", "FAC-1 Title", "--provider", "codex", "--model", "gpt-5.5", "--json"],
+        args: ["thread", "start", "/sandbox/repo", "-", "--worktree", "origin/master", "--branch", "factory/FAC-1", "--title", "FAC-1 Title", "--provider", "codex", "--model", "gpt-5.5", "--json"],
         options: { input: "Work FAC-1", timeoutMs: 60_000, maxBuffer: 16 * 1024 * 1024 },
       },
     ],
-    "the launch runs t3 thread start on the job's host, with the message on stdin and the harness as flags",
+    "the launch cuts the worktree from the repo's default branch, then runs t3 thread start on the job's host, with the message on stdin and the harness as flags",
   );
   calls.length = 0;
   assert.equal(await realThreads.state("mcp:fake", fake), "stopped", "an idle thread whose worktree the host has is stopped");
@@ -216,7 +222,12 @@ try {
   assert.equal(await realThreads.state("pending:1", fake), "running", "a pending launch asks no host");
   assert.equal(calls.length, 0);
   await assert.rejects(realThreads.state("mcp:real", localHost), /t3 thread show was called during a regression run/, "the local host still refuses T3 in a regression");
-  await assert.rejects(startThread(localHost, "/repo", "factory/X", "X", "m", harness), /t3 thread start was called during a regression run/);
+  // A clone that records its default branch, so the start gets as far as T3.
+  const clone = mkdtempSync(join(tmpdir(), "launch-regressions-"));
+  execFileSync("git", ["-C", clone, "init", "--quiet"]);
+  execFileSync("git", ["-C", clone, "symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/master"]);
+  await assert.rejects(startThread(localHost, clone, "factory/X", "X", "m", harness), /t3 thread start was called during a regression run/);
+  rmSync(clone, { recursive: true, force: true });
   await assert.rejects(realThreads.send("mcp:real", "m", localHost), /t3 thread send was called during a regression run/);
 
   // The job's host comes from the resolver: a stop is shown and sent on the host it names.

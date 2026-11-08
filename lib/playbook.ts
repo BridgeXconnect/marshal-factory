@@ -1,6 +1,6 @@
 import { join } from "node:path";
 import type { Execution } from "./execution";
-import type { JobHost } from "./host";
+import { defaultBranchRef, type JobHost } from "./host";
 import { checkoutPlaybooks, SANDBOX_PLAYBOOKS } from "./sandbox";
 
 // The factory playbook ships with the factory, not with the target repo: a sandbox image holds it
@@ -27,10 +27,10 @@ export function factoryPlaybook(execution: Execution) {
 export const jobExecution = (job: { execution: Execution | null; sandbox_id: string | null; sandbox_snapshot: string | null }): Execution =>
   job.execution ?? (job.sandbox_id || job.sandbox_snapshot ? "modal" : "local");
 
-/** Whether the repo's main has its own copy; any failure to tell counts as none. */
+/** Whether the repo's default branch has its own copy; any failure to tell counts as none. */
 export async function repoHasPlaybook(host: JobHost, checkout: string) {
   try {
-    await host.run("git", ["-C", checkout, "cat-file", "-e", `origin/main:${REPO_PLAYBOOK}`], { timeoutMs: 30_000 });
+    await host.run("git", ["-C", checkout, "cat-file", "-e", `${await defaultBranchRef(host, checkout)}:${REPO_PLAYBOOK}`], { timeoutMs: 30_000 });
     return true;
   } catch {
     return false;
