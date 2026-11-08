@@ -51,6 +51,20 @@ export const localHost: JobHost = {
   remove: async (path) => rmSync(path, { recursive: true, force: true }),
 };
 
+/**
+ * The repo's default branch as a remote ref, such as origin/main or origin/master, from the
+ * clone's origin/HEAD. A clone that never recorded it asks the remote once.
+ */
+export async function defaultBranchRef(host: JobHost, checkout: string) {
+  const read = async () => (await host.run("git", ["-C", checkout, "symbolic-ref", "--short", "refs/remotes/origin/HEAD"], { timeoutMs: 30_000 })).stdout.trim();
+  try {
+    return await read();
+  } catch {
+    await host.run("git", ["-C", checkout, "remote", "set-head", "origin", "--auto"], { timeoutMs: 60_000 });
+    return read();
+  }
+}
+
 /** Thrown by a host whose machine no longer exists, such as a terminated sandbox: its threads are gone. */
 export class HostGoneError extends Error {}
 

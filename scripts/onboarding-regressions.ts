@@ -562,7 +562,9 @@ try {
   const entry = (i: number) => ({ key: `ONB${i}-${stamp % 100000}`, sandbox_id: null, attempt: 1, source: "linear" as const, repo: LAUNCH, branch: `factory/ONB${i}`, threadTitle: "t", message: "Work it", harness: { provider: "codex", model: "gpt-6-astra" }, ticket: null });
   fake.answer = (_sandbox, argv) => (argv.slice(0, 3).join(" ") === "t3 thread start" ? { stdout: '{"threadId":"thread-warm"}' } : argv[0] === "claude" ? { stdout: "[]" } : {});
   const registryNow = async () => db.select().from(repoSettings).where(eq(repoSettings.repo, LAUNCH));
+  fake.defaultBranch = "master";
   const [warmLaunch] = await launchInSandboxes([entry(0)], slot, async () => {}, await registryNow());
+  fake.defaultBranch = "main";
   assert.equal(warmLaunch!.threadId, "thread-warm", JSON.stringify(warmLaunch));
   const [warmJob] = await db.select().from(jobs).where(eq(jobs.id, jobId("linear", jobIds[0]!)));
   const warmBox = sandboxOf(warmJob!.sandbox_id!);
@@ -570,7 +572,8 @@ try {
   assert.deepEqual(warmBox.spec!.namedSecrets, [onboarding.modalSecretName(LAUNCH)], "with the repo's secret");
   const argvs = warmBox.execs.map((e) => e.argv.join(" "));
   assert.ok(!argvs.some((a) => a.startsWith("git clone")), "nothing is cloned");
-  assert.ok(argvs.includes(`git -C ${REPO_DIR} checkout --quiet -B main origin/main`), "the checkout moves to origin/main");
+  assert.ok(argvs.includes(`git -C ${REPO_DIR} checkout --quiet -B master origin/master`), "the checkout moves to the repo's default branch");
+  assert.equal(warmBox.execs.find((e) => e.argv[2] === "start")!.argv[6], "origin/master", "and the thread's worktree is cut from it");
   assert.ok(argvs.includes(`bash -c ${recipe.setup[0]}`), "and setup runs again");
   assert.match(warmBox.execs.find((e) => e.argv[2] === "start")!.input, /setup recipe is \.factory\/setup\.json/, "the thread is told about the recipe");
   assert.equal(warmBox.files.has(recipes.UNMERGED_RECIPE_PATH), false, "a recipe on main is read from the worktree");

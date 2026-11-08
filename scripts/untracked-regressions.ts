@@ -118,7 +118,7 @@ try {
   const sentBack = await checkPullRequests({ only: keys });
   assert.ok(sentBack.conflicts.includes(CONFLICT), JSON.stringify(sentBack));
   assert.equal((await row(CONFLICT)).stage, "implementing");
-  assert.ok(sent.some((s) => s.threadId === `thread-${CONFLICT}` && /conflicts with main/.test(s.message)));
+  assert.ok(sent.some((s) => s.threadId === `thread-${CONFLICT}` && /conflicts with the default branch/.test(s.message)));
   pullStates.set(prUrl(4), { state: "open", mergeable: "mergeable", headSha: "head-d", title: "t" });
   assert.deepEqual(await inferUntracked({ only: [CONFLICT] }), [], "not while the thread may still be starting");
   shown.set(`thread-${CONFLICT}`, { state: "stopped", status: "completed", lastMessage: "Merged main.", limitedUntil: null });

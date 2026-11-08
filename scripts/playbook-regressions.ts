@@ -30,6 +30,7 @@ const host = (hasCopy: boolean): JobHost =>
     t3: "t3",
     run: async (command: string, args: string[]) => {
       calls.push([command, ...args]);
+      if (args[2] === "symbolic-ref") return { stdout: "origin/master\n", stderr: "" };
       if (!hasCopy) throw Object.assign(new Error("exit 128"), { code: 128 });
       return { stdout: "", stderr: "" };
     },
@@ -41,7 +42,14 @@ for (const execution of ["modal", "local"] as const) {
   assert.ok(bare.startsWith("Work FAC-1: Title\n\n## Factory playbook\n"), `${execution}: the section follows the message`);
   assert.ok(bare.includes(`The factory playbook is ${path}.`), `${execution}: names ${path}`);
   assert.ok(!bare.includes(REPO_PLAYBOOK), `${execution}: a repo without a copy hears nothing about one`);
-  assert.deepEqual(calls, [["git", "-C", "/work/repo", "cat-file", "-e", `origin/main:${REPO_PLAYBOOK}`]], `${execution}: the copy is looked up on main in the job's checkout`);
+  assert.deepEqual(
+    calls,
+    [
+      ["git", "-C", "/work/repo", "symbolic-ref", "--short", "refs/remotes/origin/HEAD"],
+      ["git", "-C", "/work/repo", "cat-file", "-e", `origin/master:${REPO_PLAYBOOK}`],
+    ],
+    `${execution}: the copy is looked up on the default branch in the job's checkout`,
+  );
   const withCopy = await withPlaybook("Work FAC-1: Title", execution, host(true), "/work/repo");
   assert.ok(withCopy.includes(`This repository also has ${REPO_PLAYBOOK}. The factory playbook at ${path} is authoritative`), `${execution}: the factory playbook wins over a repo copy`);
   assert.ok(withCopy.includes("only for notes specific to this repository"));

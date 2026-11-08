@@ -18,6 +18,8 @@ export const fake = {
   ops: [] as string[],
   /** Like Modal, writeText then refuses a path whose directory no `mkdir -p` made and no file is in. */
   parentsRequired: false,
+  /** The branch a clone's origin/HEAD names, as git symbolic-ref reports it. */
+  defaultBranch: "main",
 };
 
 export class FakeSandbox implements SandboxHandle {
@@ -53,7 +55,7 @@ export class FakeSandbox implements SandboxHandle {
     this.execs.push(exec);
     if (argv[0] === "mkdir" && argv[1] === "-p") for (const d of argv.slice(2)) this.dirs.add(d);
     fake.ops.push(`${this.sandboxId}: ${argv.join(" ")}`);
-    const reply = Promise.resolve(fake.answer(this, argv));
+    const reply = Promise.resolve(argv[0] === "git" && argv[3] === "symbolic-ref" ? { stdout: `origin/${fake.defaultBranch}\n` } : fake.answer(this, argv));
     const never = new Promise<never>(() => {});
     return {
       stdin: {

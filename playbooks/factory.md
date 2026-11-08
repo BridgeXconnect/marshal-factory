@@ -40,7 +40,7 @@ A run that stopped in `waiting` resumes when the reporter answers on Linear. The
 
 When the factory tells this thread that its PR conflicts with main, the board has already moved the run back to Implementing.
 
-1. Run `git fetch origin` and `git merge origin/main` on this branch. Never rebase a pushed factory branch and never force-push it.
+1. Run `git fetch origin` and `git merge origin/HEAD` (the repo's default branch, main or master) on this branch. Never rebase a pushed factory branch and never force-push it.
 2. Resolve each conflict so that main's change and yours both keep working. Read main's commit to learn what it meant. Do not drop either side to make the conflict go away.
 3. Call `report_stage` with `stage: "verifying"`, then run lint, typecheck, tests and build, and check the changed screen when the conflict touched UI.
 4. Commit the merge, push, and babysit the PR to green as in the bundled Babysit playbook. Run `factory-verify` on the pushed merge commit. Then call `report_stage` with `stage: "pr"`, the `prUrl` and a fresh merge assessment again, and end the turn.

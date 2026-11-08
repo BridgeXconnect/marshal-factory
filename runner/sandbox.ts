@@ -4,7 +4,7 @@ import { dirname, join, resolve } from "node:path";
 import type { FactoryConfig, SandboxLimits } from "../lib/config";
 import type { ExecError } from "../lib/exec";
 import { sandboxTokens, type RepoName } from "../lib/github/app";
-import type { JobHost } from "../lib/host";
+import { defaultBranchRef, type JobHost } from "../lib/host";
 import { createSandbox, modalHost, rememberSandbox, sandboxName } from "../lib/modal-host";
 import {
   BROWSER_SERVER,
@@ -214,13 +214,14 @@ export type SandboxSetup = {
 const WARM_SETUP_TIMEOUT_MS = 180_000;
 
 /**
- * A warm image has the repo cloned at the commit it was built from: bring it to origin/main and run
+ * A warm image has the repo cloned at the commit it was built from: bring it to its default branch and run
  * the recipe's setup again, which only adds what changed since. A setup that fails or runs long is
  * logged and the launch goes on; the thread's own worktree installs what it needs.
  */
 async function refreshWarmCheckout(host: JobHost, repo: string, setup: readonly string[]) {
   await host.run("git", ["-C", REPO_DIR, "fetch", "--quiet", "origin", "--prune"], { timeoutMs: 120_000 });
-  await host.run("git", ["-C", REPO_DIR, "checkout", "--quiet", "-B", "main", "origin/main"], { timeoutMs: 60_000 });
+  const ref = await defaultBranchRef(host, REPO_DIR);
+  await host.run("git", ["-C", REPO_DIR, "checkout", "--quiet", "-B", ref.slice("origin/".length), ref], { timeoutMs: 60_000 });
   const started = Date.now();
   for (const command of setup) {
     const left = WARM_SETUP_TIMEOUT_MS - (Date.now() - started);
