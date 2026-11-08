@@ -179,6 +179,8 @@ revertDeps.host = {
 revertDeps.token = async () => TOKEN;
 revertDeps.checkout = async () => "/fake/checkout";
 revertDeps.dir = "/fake/tmp";
+const REVERT_AUTHOR = { name: "marshal-factory", email: "4242+configured@users.noreply.github.com" };
+revertDeps.identity = () => REVERT_AUTHOR;
 
 // --- database
 const stamp = Date.now() % 1_000_000;
@@ -375,7 +377,7 @@ try {
     `fetch origin main`,
     `worktree add -B factory/revert-5 ${dir} origin/main`,
     `rev-list --parents -n 1 m5`,
-    `-c user.name=marshal-factory -c user.email=marshal-factory@users.noreply.github.com revert --no-edit -m 1 m5`,
+    `-c user.name=${REVERT_AUTHOR.name} -c user.email=${REVERT_AUTHOR.email} revert --no-edit -m 1 m5`,
     `rev-parse HEAD`,
     `-c credential.helper= -c push --force https://github.com/${MERGE_ONLY}.git HEAD:refs/heads/factory/revert-5`,
   ];

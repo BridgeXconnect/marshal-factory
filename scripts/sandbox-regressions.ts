@@ -21,6 +21,9 @@ const { sandboxRuntime } = await import("../runner/sandbox");
 const { readSettings, SETTINGS_ID, writeSettings } = await import("../lib/settings");
 
 modal.api = fakeModal;
+// The author a configured runner hands its sandboxes; the launch must write exactly this one.
+const IDENTITY = { name: "marshal-factory", email: "4242+configured@users.noreply.github.com" };
+sandboxRuntime.identity = () => IDENTITY;
 
 const spec = { name: "x", tags: {}, imageId: "im", secrets: {}, env: {}, encryptedPorts: [], limits: config.factory.sandbox };
 await assert.rejects(realModal.create(spec), /Modal was called during a regression run/, "the real Modal client refuses to run in a regression");
@@ -234,6 +237,9 @@ try {
   assert.ok(argvs.includes("ln -sfn /opt/marshal-factory /Users/someone/marshal-factory"), "the committed wiring's factory path links to the sandbox's");
   const order = (needle: string) => argvs.findIndex((a) => a.includes(needle));
   assert.ok(order("git clone") < order("t3 serve") && order("t3 serve") < order("t3 project add") && order("t3 project add") < order("t3 thread start"), "clone, serve, project, then the thread");
+  assert.ok(order(`git config --global user.email ${IDENTITY.email}`) >= 0, "the sandbox commits as the configured author");
+  assert.ok(order(`git config --global user.name ${IDENTITY.name}`) < order("t3 thread start") && order("user.email") < order("t3 thread start"), "set before the thread");
+  assert.ok(!argvs.some((a) => a.includes("marshal-factory@users.noreply.github.com")), "never the old invalid address");
   const startExec = sbA.execs.find((e) => e.argv[2] === "start")!;
   assert.deepEqual(startExec.argv, ["t3", "thread", "start", REPO_DIR, "-", "--worktree", "origin/main", "--branch", `factory/${keys[0]}`, "--title", `${keys[0]} t`, "--provider", "codex", "--model", "gpt-6-astra", "--json"]);
   assert.ok(startExec.input.startsWith(`Work ${keys[0]}\n\n## Factory playbook\n`), "the message, then the playbook the image holds");

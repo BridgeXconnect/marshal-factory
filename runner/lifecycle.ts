@@ -18,7 +18,7 @@ import { config } from "./config";
 import { thisMachine } from "./heartbeat";
 import { flushSandboxOutbox } from "./outbox";
 import { isolated } from "./reconcile";
-import { CodexLoginError, createJobSandbox, installCodexLogin, markSlotUnusable, needsCodexSlot, pairT3, sandboxRuntime, startT3, stopT3, usableSlots, writeGithubToken } from "./sandbox";
+import { CodexLoginError, createJobSandbox, installCodexLogin, markSlotUnusable, needsCodexSlot, pairT3, sandboxRuntime, startT3, stopT3, usableSlots, writeGitIdentity, writeGithubToken } from "./sandbox";
 import { threads } from "./threads";
 import { verifyingKeys } from "./verify";
 
@@ -427,6 +427,7 @@ async function wakeInRoom(row: JobRow, snapshot: string, asleep: SQL | undefined
     if (slot) await installCodexLogin(created.host, slot, sandboxRuntime.slotAuth(slot));
     await writeGithubToken(created.host, await sandboxRuntime.githubToken(row.repo as RepoName));
     noteTokenWritten(sandboxId);
+    await writeGitIdentity(created.host);
     await startT3(created.host);
     await flushSandboxOutbox(row.key, created.host);
     await db.update(jobs).set({ sandbox_snapshot: null }).where(and(eq(jobs.key, row.key), eq(jobs.sandbox_id, sandboxId)));

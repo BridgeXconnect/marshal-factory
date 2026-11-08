@@ -33,6 +33,7 @@ import type { HarnessChoice } from "../lib/settings";
 import { readHarnesses } from "../lib/t3-state";
 import { PAIRING_TTL_MINUTES, pairingSchema, type T3Pairing } from "../lib/t3-pairing";
 import { codexReportEnv } from "../lib/report-identity";
+import { commitIdentity, type CommitIdentity } from "../lib/commit-identity";
 import { inTestMode } from "../lib/test-mode";
 import { json, reportServer, wiredRoots, withHooks, withServer, type Json } from "../lib/target-wiring";
 
@@ -59,6 +60,8 @@ export const sandboxRuntime = {
   claudeToken: (): string | undefined => process.env.CLAUDE_CODE_OAUTH_TOKEN || undefined,
   modalToken: () => Boolean(process.env.MODAL_TOKEN_ID) || existsSync(join(homedir(), ".modal.toml")),
   githubToken: (repo: RepoName) => sandboxTokens.get(repo),
+  /** The author the sandbox's commits carry, resolved at runner start-up. */
+  identity: (): CommitIdentity => commitIdentity(),
   /** The configured CODEX_HOME dirs that hold a login. */
   slots: (limits: Pick<SandboxLimits, "codexSlots">) => limits.codexSlots.filter((slot) => existsSync(slotAuthPath(slot))),
   slotAuth: (slot: string) => readFileSync(slotAuthPath(slot), "utf8"),
@@ -184,6 +187,15 @@ async function loggedIn(host: JobHost, command: string, args: string[]) {
  */
 export const writeGithubToken = (host: JobHost, token: string) => writeSecretFile(host, GITHUB_TOKEN_PATH, token);
 
+/**
+ * Sets the sandbox's global git author and committer to the runner's. Each launch and wake writes it,
+ * so an image or snapshot built with another identity still commits as this one.
+ */
+export async function writeGitIdentity(host: JobHost, { name, email }: CommitIdentity = sandboxRuntime.identity()) {
+  await host.run("git", ["config", "--global", "user.name", name], { timeoutMs: 30_000 });
+  await host.run("git", ["config", "--global", "user.email", email], { timeoutMs: 30_000 });
+}
+
 /** Puts the slot's login in the sandbox and checks Codex accepts it; CodexLoginError when it does not. */
 export async function installCodexLogin(host: JobHost, slot: string, auth: string) {
   await host.run("mkdir", ["-p", CODEX_HOME], { timeoutMs: 30_000 });
@@ -242,6 +254,7 @@ async function refreshWarmCheckout(host: JobHost, repo: string, setup: readonly 
  */
 export async function setupSandbox(host: JobHost, setup: SandboxSetup, codexModel: string): Promise<{ choice: HarnessChoice; fallback?: string }> {
   await host.run("mkdir", ["-p", T3_USERDATA, "/work"], { timeoutMs: 30_000 });
+  await writeGitIdentity(host);
   if (setup.codex) await installCodexLogin(host, setup.codex.slot, setup.codex.auth);
   let { choice, hasClaude } = setup;
   let fallback: string | undefined;
