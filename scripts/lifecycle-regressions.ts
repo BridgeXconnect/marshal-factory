@@ -143,7 +143,7 @@ try {
   assert.ok(w("t3 serve") < w("t3 thread send thread-H"), "serve before the message");
   assert.deepEqual(sbW.spec!.encryptedPorts, [3773], "a woken sandbox declares T3's port as an encrypted tunnel");
   assert.match(argvW[w("t3 serve")]!, /serve --host 0\.0\.0\.0 --port 3773 /, "and T3 listens where the tunnel reaches it");
-  assert.match(sbW.execs[w("t3 thread send")]!.input, /conflicts with main/);
+  assert.match(sbW.execs[w("t3 thread send")]!.input, /conflicts with the default branch/);
 
   // Token refresh: every 40 minutes per running sandbox; one this runner has no record of goes at once.
   const now = Date.now();
