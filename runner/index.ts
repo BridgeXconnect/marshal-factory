@@ -258,6 +258,12 @@ const beat = createBeat({
   log,
 });
 
+// A daemon on a laptop is stranded when the Mac sleeps; --once ends before that matters.
+if (!process.argv.includes("--once")) {
+  const { keepAwake } = await import("../lib/keep-awake");
+  keepAwake(log);
+}
+
 // The startup beat marks this machine online at once; the slower inventory waits until the reconcile is done.
 if (process.argv.includes("--once")) {
   await beat({ inventory: false });
