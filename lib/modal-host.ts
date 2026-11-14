@@ -106,6 +106,16 @@ export const MODAL_DEADLINES_MS = {
   list: 30_000,
   /** `deleteSnapshot`: cleanup only. */
   deleteImage: 60_000,
+  /** `filesystem.readText`: tried twice, then the step fails. */
+  readText: 30_000,
+  /** `filesystem.writeText`: tried twice (it overwrites), then the step fails. */
+  writeText: 60_000,
+  /** The exec start RPC, before the output race begins: the step fails, no retry, since a retry could run a command twice. */
+  execStart: 60_000,
+  /** Each of a stdin write and a stdin close: the step fails. */
+  stdin: 30_000,
+  /** The sandbox image build step, from opening the build sandbox to its snapshot: the build fails and records nothing. */
+  imageBuild: 10 * 60_000,
 } as const;
 
 export type ModalDeadlines = { -readonly [K in keyof typeof MODAL_DEADLINES_MS]: number };
@@ -177,6 +187,20 @@ export const sandboxName = (key: string, attempt: number, at = Date.now()) => {
   const suffix = `-${at.toString(36)}`;
   return `${`job-${key}-a${attempt}`.replace(/[^A-Za-z0-9._-]/g, "-").slice(0, 63 - suffix.length)}${suffix}`;
 };
+
+/**
+ * Runs `call` under a deadline and, when Modal does not answer, once more; a second silence rejects with
+ * the ModalDeadlineError. Only for calls that are safe to repeat.
+ */
+async function twice<T>(label: string, ms: number, call: () => Promise<T>): Promise<T> {
+  try {
+    return await withDeadline(label, ms, call());
+  } catch (error) {
+    if (!(error instanceof ModalDeadlineError)) throw error;
+    modal.log("modal:retry-after-timeout", { call: label, ms });
+    return withDeadline(label, ms, call());
+  }
+}
 
 /**
  * The running sandboxes in the app carrying these tags. It is housekeeping, so a Modal that does not answer
@@ -302,15 +326,25 @@ export function modalHost(sandboxId: string): JobHost {
     let proc: SandboxProcess;
     try {
       const sandbox = await handle(sandboxId);
-      proc = await sandbox.exec([command, ...args], { ...(cwd !== undefined && { workdir: cwd }), ...(timeoutMs !== undefined && { timeoutMs }) });
+      // Not retried: the exec may have started, and a second one could run the command twice.
+      proc = await withDeadline(
+        `start ${command}`,
+        modal.deadlinesMs.execStart,
+        sandbox.exec([command, ...args], { ...(cwd !== undefined && { workdir: cwd }), ...(timeoutMs !== undefined && { timeoutMs }) }),
+      );
     } catch (error) {
       throw gone(sandboxId, error);
     }
     let stdinError: Error | undefined;
-    // Closed even without input, so a command that reads stdin cannot hang on it.
-    await (input === undefined ? Promise.resolve() : proc.stdin.writeText(input))
-      .then(() => proc.stdin.close())
-      .catch((error: unknown) => void (stdinError = error instanceof Error ? error : new Error(String(error))));
+    try {
+      // Closed even without input, so a command that reads stdin cannot hang on it.
+      if (input !== undefined) await withDeadline(`write stdin to ${command}`, modal.deadlinesMs.stdin, proc.stdin.writeText(input));
+      await withDeadline(`close stdin of ${command}`, modal.deadlinesMs.stdin, proc.stdin.close());
+    } catch (error) {
+      // A stdin that does not answer means the command never gets its input: the step fails.
+      if (error instanceof ModalDeadlineError) throw error;
+      stdinError = error instanceof Error ? error : new Error(String(error));
+    }
 
     let timer: ReturnType<typeof setTimeout> | undefined;
     const outcome = Promise.all([proc.stdout.readText(), proc.stderr.readText(), proc.wait()]);
@@ -354,23 +388,30 @@ export function modalHost(sandboxId: string): JobHost {
     run,
     async readFile(path) {
       try {
-        return await (await handle(sandboxId)).filesystem.readText(path);
+        const sandbox = await handle(sandboxId);
+        return await twice(`read ${path}`, modal.deadlinesMs.readText, () => sandbox.filesystem.readText(path));
       } catch (error) {
         if (error instanceof SandboxFilesystemNotFoundError) return null;
         throw gone(sandboxId, error);
       }
     },
     async writeFile(path, text) {
+      // A write overwrites, so a second try after a silence is safe; a second silence fails the step.
+      const write = async () => {
+        const sandbox = await handle(sandboxId);
+        await twice(`write ${path}`, modal.deadlinesMs.writeText, () => sandbox.filesystem.writeText(text, path));
+      };
       try {
-        await (await handle(sandboxId)).filesystem.writeText(text, path);
+        await write();
         return;
       } catch (error) {
         if (isGone(error)) throw gone(sandboxId, error);
+        if (error instanceof ModalDeadlineError) throw error;
       }
       // Modal's writeText creates no directories; most writes land in one that exists, so mkdir only on a miss.
       await run("mkdir", ["-p", path.slice(0, path.lastIndexOf("/")) || "/"], { timeoutMs: 30_000 });
       try {
-        await (await handle(sandboxId)).filesystem.writeText(text, path);
+        await write();
       } catch (error) {
         throw gone(sandboxId, error);
       }
