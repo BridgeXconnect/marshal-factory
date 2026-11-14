@@ -99,7 +99,7 @@ const settingsFile = z.looseObject({
   providerInstances: z.record(
     z.string(),
     z.looseObject({ driver: z.string(), enabled: z.boolean().default(true), displayName: z.string().nullish() }),
-  ),
+  ).default({}),
 });
 
 const manifestModel = z.looseObject({ slug: z.string(), name: z.string().optional() });
@@ -114,20 +114,34 @@ const manifestFile = z.looseObject({
 
 const readJson = (path: string) => JSON.parse(readFileSync(path, "utf8")) as unknown;
 
+/** Instances T3 runs, enabled, without any settings entry; each one's id is its driver. */
+const DEFAULT_INSTANCES = ["claudeAgent", "codex"];
+
+/** T3 writes no settings file until a setting changes, and reads a missing one as no instances configured. */
+function readSettingsFile(path: string): unknown {
+  try {
+    return readJson(path);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return { providerInstances: {} };
+    throw error;
+  }
+}
+
 /**
- * T3's provider instances with the models its manifest lists as current for each driver. A driver
- * the manifest does not cover, or a missing manifest, gives no models; a missing or unreadable
- * settings file throws.
+ * T3's provider instances, its unconfigured default ones included, with the models its manifest
+ * lists as current for each driver. A driver the manifest does not cover, or a missing manifest,
+ * gives no models; an unreadable settings file throws.
  */
 export function readHarnesses(userdataDir = t3UserdataDir()): Harness[] {
-  const { providerInstances } = settingsFile.parse(readJson(join(userdataDir, "settings.json")));
+  const { providerInstances } = settingsFile.parse(readSettingsFile(join(userdataDir, "settings.json")));
+  const unconfigured = DEFAULT_INSTANCES.filter((id) => !Object.hasOwn(providerInstances, id)).map((id) => [id, { driver: id, enabled: true, displayName: null }] as const);
   let manifest: z.infer<typeof manifestFile>["manifest"] = { currentModels: {}, providers: {} };
   try {
     manifest = manifestFile.parse(readJson(join(userdataDir, "model-manifest.json"))).manifest;
   } catch {
     // Harnesses without models still show which providers exist.
   }
-  return Object.entries(providerInstances).map(([id, instance]) => {
+  return [...Object.entries(providerInstances), ...unconfigured].map(([id, instance]) => {
     const known = Object.values(manifest.providers[instance.driver]?.models ?? []);
     const nameOf = new Map(known.map((m) => [m.slug, m.name]));
     return {

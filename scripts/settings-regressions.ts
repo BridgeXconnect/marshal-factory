@@ -1,5 +1,7 @@
 import "./test-guard";
 import assert from "node:assert/strict";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { eq } from "drizzle-orm";
 import type { Harness } from "../lib/harness";
@@ -50,11 +52,39 @@ assert.deepEqual(
 );
 assert.deepEqual(
   readHarnesses(join(fixtures, "no-manifest")),
-  [{ id: "codex", driver: "codex", name: "Codex", enabled: true, models: [] }],
-  "without a manifest the harnesses still show, with no models",
+  [
+    { id: "codex", driver: "codex", name: "Codex", enabled: false, models: [] },
+    { id: "claudeAgent", driver: "claudeAgent", name: "Claude Code", enabled: true, models: [] },
+  ],
+  "without a manifest the harnesses still show, with no models, and an unconfigured default instance shows enabled",
 );
 assert.throws(() => readHarnesses(join(fixtures, "broken")), "a settings file of the wrong shape throws, so the inventory says unknown");
-assert.throws(() => readHarnesses(join(fixtures, "missing")), "a missing settings file throws");
+assert.deepEqual(
+  readHarnesses(join(fixtures, "missing")),
+  [
+    { id: "claudeAgent", driver: "claudeAgent", name: "Claude Code", enabled: true, models: [] },
+    { id: "codex", driver: "codex", name: "Codex", enabled: true, models: [] },
+  ],
+  "a missing settings file is T3's defaults: Claude Code and Codex, enabled",
+);
+
+const settingsDir = mkdtempSync(join(tmpdir(), "t3-harness-settings-"));
+try {
+  for (const settings of [{}, { projectSettingsFolded: true, idleCompaction: true }]) {
+    writeFileSync(join(settingsDir, "settings.json"), JSON.stringify(settings));
+    assert.deepEqual(
+      readHarnesses(settingsDir),
+      readHarnesses(join(fixtures, "missing")),
+      "settings without providerInstances retain T3's enabled default harnesses",
+    );
+  }
+  for (const providerInstances of [null, [], { codex: null }, { codex: {} }, { codex: { driver: 1 } }, { codex: { driver: "codex", enabled: "yes" } }]) {
+    writeFileSync(join(settingsDir, "settings.json"), JSON.stringify({ providerInstances }));
+    assert.throws(() => readHarnesses(settingsDir), "explicitly malformed providerInstances still throws");
+  }
+} finally {
+  rmSync(settingsDir, { recursive: true });
+}
 
 const harness = (id: string, enabled = true, models = ["m1"]): Harness => ({
   id,
