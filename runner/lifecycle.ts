@@ -4,7 +4,7 @@ import { db } from "../db/client";
 import { auditLog, codexSlotLeases, jobs, repoSettings, type JobRow } from "../db/schema";
 import type { RepoName } from "../lib/github/app";
 import { HostGoneError, hosts, isHibernated, WakeDeferredError, type HostedJob, type JobHost } from "../lib/host";
-import { deleteSnapshot, isModalGone, modal, modalHost, snapshotSandbox, terminateSandbox, tunnelUrl } from "../lib/modal-host";
+import { deleteSnapshot, isModalGone, listSandboxes, modalHost, snapshotSandbox, terminateSandbox, tunnelUrl } from "../lib/modal-host";
 import { modalSecretName, parseDetail } from "../lib/onboarding";
 import { CODEX_AUTH, T3_PORT } from "../lib/sandbox";
 import { readSettings, resolveExecution } from "../lib/settings";
@@ -79,7 +79,7 @@ export async function sandboxesInFlight(machineId: string) {
       ),
     );
   const ids = rows.flatMap((r) => (r.sandbox_id ? [r.sandbox_id] : []));
-  const running = ids.length > 0 ? new Set((await modal.api.list(config.factory.sandbox.appName, { label: config.factory.label })).map((s) => s.sandboxId)) : new Set<string>();
+  const running = ids.length > 0 ? new Set((await listSandboxes(config.factory.sandbox.appName, { label: config.factory.label })).map((s) => s.sandboxId)) : new Set<string>();
   return rows.filter((r) => !r.sandbox_id || running.has(r.sandbox_id)).length + waking;
 }
 
@@ -509,7 +509,7 @@ const suspects = { sandboxes: new Set<string>(), slots: new Set<string>() };
  */
 export async function reap() {
   const machine = await thisMachine();
-  const listed = await modal.api.list(config.factory.sandbox.appName, { label: config.factory.label });
+  const listed = await listSandboxes(config.factory.sandbox.appName, { label: config.factory.label });
   const running = new Set(listed.map((s) => s.sandboxId));
   const ours = listed.filter((s) => !s.tags.machine || s.tags.machine === machine.id).map((s) => s.sandboxId);
   const owned = new Set(

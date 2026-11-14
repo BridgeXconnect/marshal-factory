@@ -8,7 +8,7 @@ import type { RepoName } from "../lib/github/app";
 import { fileOnDefaultBranch } from "../lib/github/installation";
 import { github } from "../lib/github/pulls";
 import { HostGoneError, type JobHost } from "../lib/host";
-import { createSandbox, deleteSnapshot, modal, modalHost, rememberSandbox, terminateSandbox } from "../lib/modal-host";
+import { createSandbox, deleteSnapshot, listSandboxes, modal, modalHost, rememberSandbox, terminateSandbox } from "../lib/modal-host";
 import {
   afterRecipe,
   bugbotVerdict,
@@ -548,7 +548,7 @@ let suspects = new Set<string>();
 
 async function reapOnboarding(rows: readonly RepoSettingsRow[]) {
   const machine = await thisMachine();
-  const listed = await modal.api.list(config.factory.sandbox.appName, ONBOARDING_TAGS(machine.id));
+  const listed = await listSandboxes(config.factory.sandbox.appName, ONBOARDING_TAGS(machine.id));
   const owned = new Set(rows.map((r) => parseDetail(r.onboarding_detail).run?.sandboxId).filter(Boolean));
   const orphans = listed.map((s) => s.sandboxId).filter((id) => !owned.has(id));
   const ended = orphans.filter((id) => suspects.has(id));
