@@ -230,13 +230,14 @@ const WARM_SETUP_TIMEOUT_MS = 180_000;
  * the recipe's setup again, which only adds what changed since. A setup that fails or runs long is
  * logged and the launch goes on; the thread's own worktree installs what it needs.
  */
-async function refreshWarmCheckout(host: JobHost, repo: string, setup: readonly string[]) {
+export async function refreshWarmCheckout(host: JobHost, repo: string, setup: readonly string[]) {
   await host.run("git", ["-C", REPO_DIR, "fetch", "--quiet", "origin", "--prune"], { timeoutMs: 120_000 });
   const ref = await defaultBranchRef(host, REPO_DIR);
   await host.run("git", ["-C", REPO_DIR, "checkout", "--quiet", "-B", ref.slice("origin/".length), ref], { timeoutMs: 60_000 });
   const started = Date.now();
   for (const command of setup) {
-    const left = WARM_SETUP_TIMEOUT_MS - (Date.now() - started);
+    // Modal takes a whole number of seconds and refuses any other, so what is left rounds down.
+    const left = Math.floor((WARM_SETUP_TIMEOUT_MS - (Date.now() - started)) / 1000) * 1000;
     if (left <= 0) break;
     try {
       await host.run("bash", ["-c", command], { cwd: REPO_DIR, timeoutMs: left });
