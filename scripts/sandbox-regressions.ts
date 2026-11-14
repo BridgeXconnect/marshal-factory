@@ -13,7 +13,7 @@ const { linearJob } = await import("./fixtures");
 const { jobId } = await import("../lib/sources/shapes");
 const { TEST_MACHINE_ID } = await import("../lib/config");
 const { HostGoneError, hosts, localHost } = await import("../lib/host");
-const { modal, modalHost, realModal, sandboxName } = await import("../lib/modal-host");
+const { isModalGone, modal, modalHost, realModal, sandboxName } = await import("../lib/modal-host");
 const { enabledPstack, imageProblem, parseVersion, browserServer, pinnedVersions, PSTACK_PLUGIN, REPO_DIR } = await import("../lib/sandbox");
 const { config, launchSettings, threads } = await import("../runner/ops");
 const { launchInSandboxes, maybeStarted, recoverPending } = await import("../runner/launch");
@@ -79,6 +79,15 @@ shutDown.exec = async () => {
 };
 sandboxes.set(shutDown.sandboxId, shutDown);
 await assert.rejects(modalHost(shutDown.sandboxId).run("echo", []), HostGoneError, "and one whose exec gets gRPC's NOT_FOUND");
+// modal 0.11.1 answers an exec into a sandbox that has exited but is not yet deleted with a plain Error, not a ClientError.
+const exited = new FakeSandbox("sb-exited");
+exited.exec = async () => {
+  throw new Error("Command router access is not available for this sandbox");
+};
+sandboxes.set(exited.sandboxId, exited);
+await assert.rejects(modalHost(exited.sandboxId).run("echo", []), HostGoneError, "and one whose exec finds no command router: it has exited");
+assert.equal(await threads.state("thread-1", modalHost(exited.sandboxId)), "gone", "so its thread is gone and the job fails, instead of the error being thrown");
+assert.equal(isModalGone(new Error("Command router access is not enabled for task ta-1")), false, "a plain Error with another message is still an error, not a gone sandbox");
 const flaky = new FakeSandbox("sb-flaky");
 flaky.exec = async () => {
   throw Object.assign(new Error("UNAVAILABLE"), { name: "ClientError", code: 14 });
@@ -207,6 +216,9 @@ try {
     defaultModelSelection: { instanceId: "codex", model: "gpt-6-astra" },
     textGenerationModelSelection: { instanceId: "codex", model: "gpt-6-astra" },
     defaultRuntimeMode: "full-access",
+    // startT3 adds these so a thread its provider's usage limit stopped is snoozed, not resumed.
+    snoozeLimitedThreads: true,
+    autoResumeLimitedThreads: false,
     providerInstances: {
       codex: { driver: "codex", enabled: true, config: { binaryPath: "codex", homePath: "/root/.codex" } },
       claudeAgent: { driver: "claudeAgent", enabled: false },

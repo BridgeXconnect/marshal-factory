@@ -124,10 +124,14 @@ export const sandboxName = (key: string, attempt: number, at = Date.now()) => {
 /** gRPC's NOT_FOUND, which an exec into a sandbox that shut down, or never existed, gets raw from the SDK. */
 const GRPC_NOT_FOUND = 5;
 
+/** What the SDK says of an exec into a sandbox that has exited but is not yet deleted: a plain Error. */
+const COMMAND_ROUTER_GONE = /Command router access is not available for this sandbox/;
+
 const isGone = (error: unknown) =>
   error instanceof NotFoundError ||
   (error instanceof ConflictError && /already finished/.test(error.message)) ||
-  (error instanceof Error && error.name === "ClientError" && (error as { code?: unknown }).code === GRPC_NOT_FOUND);
+  (error instanceof Error && error.name === "ClientError" && (error as { code?: unknown }).code === GRPC_NOT_FOUND) ||
+  (error instanceof Error && COMMAND_ROUTER_GONE.test(error.message));
 
 const gone = (sandboxId: string, error: unknown) =>
   isGone(error) ? new HostGoneError(`sandbox ${sandboxId} is gone: ${(error as Error).message}`) : error;
