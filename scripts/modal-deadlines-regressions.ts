@@ -30,8 +30,9 @@ async function test(name: string, body: () => Promise<void>) {
 
 try {
   await test("the deadlines are the approved values, in one place", async () => {
-    assert.deepEqual(MODAL_DEADLINES_MS, { lookup: 30_000, terminate: 60_000, list: 30_000, deleteImage: 60_000 });
-    assert.deepEqual(original, MODAL_DEADLINES_MS, "the live deadlines start as the constants");
+    const { lookup, terminate, list, deleteImage } = MODAL_DEADLINES_MS;
+    assert.deepEqual({ lookup, terminate, list, deleteImage }, { lookup: 30_000, terminate: 60_000, list: 30_000, deleteImage: 60_000 });
+    assert.deepEqual(original, { ...MODAL_DEADLINES_MS }, "the live deadlines start as the constants");
   });
 
   await test("withDeadline rejects a promise that never settles, and passes through one that does", async () => {

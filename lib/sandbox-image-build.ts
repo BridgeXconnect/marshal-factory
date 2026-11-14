@@ -7,7 +7,7 @@ import { ModalClient } from "modal";
 import { z } from "zod";
 import { SANDBOX_IMAGE_PATH, type SandboxLimits } from "./config";
 import { imageDrift, rebuildText, type ImageVersions } from "./machine";
-import type { SandboxHandle } from "./modal-host";
+import { ModalDeadlineError, modal as modalRuntime, withDeadline, type SandboxHandle } from "./modal-host";
 import {
   enabledPstack,
   FACTORY_ROOT,
@@ -209,41 +209,61 @@ export async function buildSandboxImage({
     await execFileAsync("bun", ["build", ...IMAGE_BUNDLES, "--target=bun", "--root", ".", "--outdir", bundleDir, "--entry-naming", "[dir]/[name].ts"], { cwd: ROOT });
     log(`bundled ${IMAGE_BUNDLES.join(", ")}`);
     if (signal?.aborted) throw new Error("the build was stopped");
-    sandbox = await open(limits, log);
-    log(`build sandbox ${sandbox.sandboxId} up`);
-    const opened = sandbox;
-    const end = () => void opened.terminate().catch(() => {});
-    signal?.addEventListener("abort", end, { once: true });
-    if (signal?.aborted) end();
-    for (const entry of IMAGE_BUNDLES) await sandbox.filesystem.writeText(readFileSync(join(bundleDir, entry), "utf8"), join(FACTORY_ROOT, entry));
-    const playbooks = await installPlaybooks(sandbox.filesystem);
-    log(`playbooks ${PLAYBOOK_FILES.join(", ")} in ${SANDBOX_PLAYBOOKS} at ${playbooks}`);
-    const pinned = pinnedVersions(limits);
-    const built: ImageVersions = {
-      t3: parseVersion("t3", await sh(sandbox, "t3 --version")) ?? undefined,
-      claudeCode: parseVersion("claudeCode", await sh(sandbox, "claude --version")) ?? undefined,
-      codex: parseVersion("codex", await sh(sandbox, "codex --version")) ?? undefined,
-      playwrightMcp: parseVersion("playwrightMcp", await sh(sandbox, "playwright-mcp --version")) ?? undefined,
-      pstack: await pstackInImage(sandbox, limits, log),
-      playbooks,
-    };
-    const drift = imageDrift(built, pinned);
-    if (drift.length > 0) throw new Error(`the build sandbox does not match the pins: ${rebuildText(drift)}`);
-    log(`versions: ${Object.entries(built).map(([component, version]) => `${component} ${version}`).join(" | ")} | bun ${await sh(sandbox, "bun --version")}`);
-    await sh(sandbox, `cd /tmp && echo '{}' | bun ${FACTORY_ROOT}/hooks/report.ts && echo '{}' | bun ${FACTORY_ROOT}/hooks/budget.ts`);
-    // Outside a git repo factory-verify refuses with exit 2, which shows the bundle loads.
-    await sh(sandbox, `cd /tmp && { factory-verify --no-post 2>/dev/null; test $? -eq 2; }`);
-    log("hook bundles run");
+    // The whole step, from opening the build sandbox to its snapshot, is bounded; on expiry the sandbox is ended and nothing is recorded.
+    const deadline = new AbortController();
+    const stopped = signal ? AbortSignal.any([signal, deadline.signal]) : deadline.signal;
+    return await withDeadline(
+      "build the sandbox image",
+      modalRuntime.deadlinesMs.imageBuild,
+      (async () => {
+        sandbox = await open(limits, log);
+        log(`build sandbox ${sandbox.sandboxId} up`);
+        const opened = sandbox;
+        const end = () => void opened.terminate().catch(() => {});
+        stopped.addEventListener("abort", end, { once: true });
+        if (stopped.aborted) end();
+        for (const entry of IMAGE_BUNDLES) await sandbox.filesystem.writeText(readFileSync(join(bundleDir, entry), "utf8"), join(FACTORY_ROOT, entry));
+        const playbooks = await installPlaybooks(sandbox.filesystem);
+        log(`playbooks ${PLAYBOOK_FILES.join(", ")} in ${SANDBOX_PLAYBOOKS} at ${playbooks}`);
+        const pinned = pinnedVersions(limits);
+        const built: ImageVersions = {
+          t3: parseVersion("t3", await sh(sandbox, "t3 --version")) ?? undefined,
+          claudeCode: parseVersion("claudeCode", await sh(sandbox, "claude --version")) ?? undefined,
+          codex: parseVersion("codex", await sh(sandbox, "codex --version")) ?? undefined,
+          playwrightMcp: parseVersion("playwrightMcp", await sh(sandbox, "playwright-mcp --version")) ?? undefined,
+          pstack: await pstackInImage(sandbox, limits, log),
+          playbooks,
+        };
+        const drift = imageDrift(built, pinned);
+        if (drift.length > 0) throw new Error(`the build sandbox does not match the pins: ${rebuildText(drift)}`);
+        log(`versions: ${Object.entries(built).map(([component, version]) => `${component} ${version}`).join(" | ")} | bun ${await sh(sandbox, "bun --version")}`);
+        await sh(sandbox, `cd /tmp && echo '{}' | bun ${FACTORY_ROOT}/hooks/report.ts && echo '{}' | bun ${FACTORY_ROOT}/hooks/budget.ts`);
+        // Outside a git repo factory-verify refuses with exit 2, which shows the bundle loads.
+        await sh(sandbox, `cd /tmp && { factory-verify --no-post 2>/dev/null; test $? -eq 2; }`);
+        log("hook bundles run");
 
-    // A stop from here on ends the sandbox under the snapshot, which then fails; one after it records the image, which passed every check.
-    const image = await sandbox.snapshotFilesystem({ ttlMs: null, timeoutMs: 300_000 });
-    const factoryCommit = (await execFileAsync("git", ["rev-parse", "HEAD"], { cwd: ROOT })).stdout.trim();
-    const state: SandboxImage = { imageId: image.imageId, t3Version: limits.t3Version, versions: pinned, factoryCommit, builtAt: new Date().toISOString() };
-    writeImage(path, state);
-    log(`image ${image.imageId} recorded in ${path}`);
-    return state;
+        // A stop from here on ends the sandbox under the snapshot, which then fails; one after it records the image, which passed every check.
+        const image = await sandbox.snapshotFilesystem({ ttlMs: null, timeoutMs: 300_000 });
+        const factoryCommit = (await execFileAsync("git", ["rev-parse", "HEAD"], { cwd: ROOT })).stdout.trim();
+        const state: SandboxImage = { imageId: image.imageId, t3Version: limits.t3Version, versions: pinned, factoryCommit, builtAt: new Date().toISOString() };
+        // The step ran out of time while this was finishing: record nothing.
+        if (deadline.signal.aborted) throw new Error("the build ran out of time");
+        writeImage(path, state);
+        log(`image ${image.imageId} recorded in ${path}`);
+        return state;
+      })(),
+      (label, ms) => {
+        deadline.abort();
+        return new ModalDeadlineError(label, ms);
+      },
+    );
   } finally {
-    await sandbox?.terminate().catch((error: unknown) => log(`could not terminate the build sandbox: ${String(error)}`));
+    // Bounded too: a terminate that never answers must not hold the build lock.
+    if (sandbox) {
+      await withDeadline("end the build sandbox", modalRuntime.deadlinesMs.terminate, sandbox.terminate()).catch((error: unknown) =>
+        log(`could not terminate the build sandbox: ${String(error)}`),
+      );
+    }
     if (bundleDir) rmSync(bundleDir, { recursive: true, force: true });
     held.release();
   }
