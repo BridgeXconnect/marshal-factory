@@ -51,6 +51,8 @@ export class FakeSandbox implements SandboxHandle {
   }
   async exec(argv: string[], params?: { workdir?: string; timeoutMs?: number }): Promise<SandboxProcess> {
     this.alive();
+    // The real client refuses an exec timeout that is not a whole number of seconds.
+    if (params?.timeoutMs !== undefined && params.timeoutMs % 1000 !== 0) throw new Error(`timeoutMs must be a multiple of 1000ms, got ${params.timeoutMs}`);
     const exec: Exec = { argv, params, input: "", closed: false };
     this.execs.push(exec);
     if (argv[0] === "mkdir" && argv[1] === "-p") for (const d of argv.slice(2)) this.dirs.add(d);
