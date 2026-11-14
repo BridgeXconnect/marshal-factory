@@ -1,10 +1,12 @@
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { CONFIG_PATH } from "../lib/config";
-import { json, withHooks, withServer, type Json } from "../lib/target-wiring";
+import { json, withCodexReportServer, withHooks, withServer, type Json } from "../lib/target-wiring";
 
-// Wires a target repo to this checkout: hooks, the factory-report MCP server, the playbook.
+// Wires a target repo to this checkout: hooks, the factory-report MCP server, the playbook; and, once per
+// machine, the same server into a local Codex's own config, which has no hooks and no .mcp.json.
 // Re-running converges on the same files and merges with what the repo already has.
 
 const root = fileURLToPath(new URL("..", import.meta.url)).replace(/\/$/, "");
@@ -50,6 +52,20 @@ write(
   join(target, ".agents/playbooks/factory.md"),
   readFileSync(join(root, "playbooks/factory.md"), "utf8"),
 );
+
+// A local Codex reads only its own config ($CODEX_HOME or ~/.codex), and its server must post stages itself.
+// Only the factory-report table is added or updated; no Codex install (no folder) is left alone.
+const codexHome = process.env.CODEX_HOME ?? join(homedir(), ".codex");
+if (!existsSync(codexHome)) {
+  console.log(`skipped   ${join(codexHome, "config.toml")}: no Codex folder here, so no local Codex to wire`);
+} else {
+  const codexPath = join(codexHome, "config.toml");
+  try {
+    write(codexPath, withCodexReportServer(existsSync(codexPath) ? readFileSync(codexPath, "utf8") : "", root));
+  } catch (error) {
+    console.log(`skipped   ${codexPath}: ${(error as Error).message}`);
+  }
+}
 
 // Claude Code puts isolated subagents in .claude/worktrees/; linting them breaks the repo's lint.
 const eslintConfig = ["eslint.config.mjs", "eslint.config.js", "eslint.config.ts"]
