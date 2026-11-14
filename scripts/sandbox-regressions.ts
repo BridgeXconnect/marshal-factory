@@ -216,6 +216,9 @@ try {
     defaultModelSelection: { instanceId: "codex", model: "gpt-6-astra" },
     textGenerationModelSelection: { instanceId: "codex", model: "gpt-6-astra" },
     defaultRuntimeMode: "full-access",
+    // startT3 adds these so a thread its provider's usage limit stopped is snoozed, not resumed.
+    snoozeLimitedThreads: true,
+    autoResumeLimitedThreads: false,
     providerInstances: {
       codex: { driver: "codex", enabled: true, config: { binaryPath: "codex", homePath: "/root/.codex" } },
       claudeAgent: { driver: "claudeAgent", enabled: false },
