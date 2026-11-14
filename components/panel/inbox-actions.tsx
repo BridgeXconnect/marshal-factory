@@ -362,3 +362,28 @@ export function InboxActions({
     </div>
   );
 }
+
+/** The inbox's answer box, for run detail: posts the reply on the issue and the agent resumes with it. */
+export function AnswerQuestion({ job }: { job: Pick<JobRow, "id"> }) {
+  const { busy, error, run } = useInboxAction();
+  return (
+    <div className="flex flex-col gap-3">
+      <Compose
+        label="Your answer"
+        description="Posted on the issue as your reply; the agent resumes with it."
+        placeholder="Answer the question"
+        submit="Send answer"
+        icon={<SendIcon data-icon="inline-start" />}
+        disabled={busy !== null}
+        loading={busy?.action === "answer"}
+        onSend={(text, clear) => void run("answer", () => answerQuestion(job.id, crypto.randomUUID(), text), "Answer sent.", clear)}
+      />
+      <Waiting busy={busy} />
+      {error && (
+        <Alert variant="error">
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      )}
+    </div>
+  );
+}
