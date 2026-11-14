@@ -92,8 +92,65 @@ export const realModal: ModalApi = {
   deleteImage: async (imageId) => modalClient().images.delete(imageId),
 };
 
-/** The Modal client the runner uses; regressions replace `api` and may shorten `createTimeoutMs`. */
-export const modal: { api: ModalApi; createTimeoutMs: number } = { api: realModal, createTimeoutMs: 120_000 };
+/**
+ * Every deadline on a Modal call, in one place. The SDK's calls carry none, so a lost reply or a slept
+ * machine would otherwise hold a runner step for good. What a call does when its deadline passes is
+ * written next to the call.
+ */
+export const MODAL_DEADLINES_MS = {
+  /** `handle()` / `fromId`: a lookup that cannot answer in time counts as a sandbox that is gone. */
+  lookup: 30_000,
+  /** `terminateSandbox`: teardown is best effort. */
+  terminate: 60_000,
+  /** `listSandboxes`: tried twice. */
+  list: 30_000,
+  /** `deleteSnapshot`: cleanup only. */
+  deleteImage: 60_000,
+} as const;
+
+export type ModalDeadlines = { -readonly [K in keyof typeof MODAL_DEADLINES_MS]: number };
+
+const logJson = (event: string, detail: Record<string, unknown>) => console.log(JSON.stringify({ at: new Date().toISOString(), event, ...detail }));
+
+/**
+ * The Modal client the runner uses; regressions replace `api`, `log`, and may shorten `createTimeoutMs`
+ * or any of `deadlinesMs`.
+ */
+export const modal: { api: ModalApi; createTimeoutMs: number; deadlinesMs: ModalDeadlines; log: (event: string, detail: Record<string, unknown>) => void } = {
+  api: realModal,
+  createTimeoutMs: 120_000,
+  deadlinesMs: { ...MODAL_DEADLINES_MS },
+  log: logJson,
+};
+
+/** A Modal call that did not answer within its deadline. */
+export class ModalDeadlineError extends Error {
+  constructor(
+    readonly label: string,
+    readonly ms: number,
+  ) {
+    super(`Modal did not answer ${label} within ${ms / 1000} s`);
+    this.name = "ModalDeadlineError";
+  }
+}
+
+/** A sandbox lookup that did not answer: indistinguishable from a sandbox that is gone, so it counts as one. */
+export class ModalLookupTimeoutError extends ModalDeadlineError {}
+
+/**
+ * Settles with `call`, or rejects with `error` once `ms` pass. A timed-out SDK call cannot be cancelled,
+ * so it is abandoned (its later outcome is swallowed); that is fine for these short calls.
+ */
+export async function withDeadline<T>(label: string, ms: number, call: Promise<T>, error: (label: string, ms: number) => Error = (l, m) => new ModalDeadlineError(l, m)): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_, reject) => (timer = setTimeout(() => reject(error(label, ms)), ms)));
+  call.catch(() => {});
+  try {
+    return await Promise.race([call, deadline]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 /**
  * Creates a sandbox, giving up after `modal.createTimeoutMs`: Modal's calls carry no deadline and its
@@ -121,6 +178,22 @@ export const sandboxName = (key: string, attempt: number, at = Date.now()) => {
   return `${`job-${key}-a${attempt}`.replace(/[^A-Za-z0-9._-]/g, "-").slice(0, 63 - suffix.length)}${suffix}`;
 };
 
+/**
+ * The running sandboxes in the app carrying these tags. It is housekeeping, so a Modal that does not answer
+ * twice in a row reads as an empty list (logged) and the next tick repeats the question.
+ */
+export async function listSandboxes(appName: string, tags: Record<string, string>): Promise<ListedSandbox[]> {
+  for (let attempt = 1; ; attempt++) {
+    try {
+      return await withDeadline("list sandboxes", modal.deadlinesMs.list, modal.api.list(appName, tags));
+    } catch (error) {
+      if (!(error instanceof ModalDeadlineError)) throw error;
+      modal.log("modal:list-timeout", { appName, attempt, ms: error.ms });
+      if (attempt === 2) return [];
+    }
+  }
+}
+
 /** gRPC's NOT_FOUND, which an exec into a sandbox that shut down, or never existed, gets raw from the SDK. */
 const GRPC_NOT_FOUND = 5;
 
@@ -129,6 +202,7 @@ const COMMAND_ROUTER_GONE = /Command router access is not available for this san
 
 const isGone = (error: unknown) =>
   error instanceof NotFoundError ||
+  error instanceof ModalLookupTimeoutError ||
   (error instanceof ConflictError && /already finished/.test(error.message)) ||
   (error instanceof Error && error.name === "ClientError" && (error as { code?: unknown }).code === GRPC_NOT_FOUND) ||
   (error instanceof Error && COMMAND_ROUTER_GONE.test(error.message));
@@ -141,22 +215,35 @@ const handles = new Map<string, Promise<SandboxHandle>>();
 /** Caches a handle the runner just created, so its first command needs no lookup. */
 export const rememberSandbox = (sandbox: SandboxHandle) => void handles.set(sandbox.sandboxId, Promise.resolve(sandbox));
 
+/**
+ * The cached handle for a sandbox. A lookup that fails, or does not answer within the lookup deadline
+ * (ModalLookupTimeoutError, which `isGone` counts as gone), is evicted, so the next call asks again
+ * instead of replaying the failure.
+ */
 const handle = (sandboxId: string) => {
   let cached = handles.get(sandboxId);
   if (!cached) {
-    cached = modal.api.fromId(sandboxId);
-    handles.set(sandboxId, cached);
-    cached.catch(() => handles.delete(sandboxId));
+    const lookup: Promise<SandboxHandle> = withDeadline(`look up sandbox ${sandboxId}`, modal.deadlinesMs.lookup, modal.api.fromId(sandboxId), (label, ms) => new ModalLookupTimeoutError(label, ms));
+    cached = lookup;
+    handles.set(sandboxId, lookup);
+    lookup.catch(() => {
+      if (handles.get(sandboxId) === lookup) handles.delete(sandboxId);
+    });
   }
   return cached;
 };
 
-/** Ends the sandbox and everything in it; one already gone counts as terminated. */
+/**
+ * Ends the sandbox and everything in it; one already gone counts as terminated. One that does not answer
+ * within the deadline is logged and counts as terminated too: teardown never holds a job, and a sandbox
+ * left behind is ended by its own timeout and by the reap.
+ */
 export async function terminateSandbox(sandboxId: string) {
   try {
-    await (await handle(sandboxId)).terminate();
+    await withDeadline(`terminate sandbox ${sandboxId}`, modal.deadlinesMs.terminate, (async () => (await handle(sandboxId)).terminate())());
   } catch (error) {
-    if (!isGone(error)) throw error;
+    if (error instanceof ModalDeadlineError) modal.log("modal:terminate-timeout", { sandbox: sandboxId, ms: error.ms, lookup: error instanceof ModalLookupTimeoutError });
+    else if (!isGone(error)) throw error;
   } finally {
     handles.delete(sandboxId);
   }
@@ -184,12 +271,16 @@ export async function tunnelUrl(sandboxId: string, port: number): Promise<Tunnel
   }
 }
 
-/** Deletes a snapshot image; one already deleted or expired counts as deleted. */
+/**
+ * Deletes a snapshot image; one already deleted or expired counts as deleted. One Modal does not answer
+ * for in time is logged and skipped: nothing sweeps it again, so it lives until its own TTL.
+ */
 export async function deleteSnapshot(imageId: string) {
   try {
-    await modal.api.deleteImage(imageId);
+    await withDeadline(`delete image ${imageId}`, modal.deadlinesMs.deleteImage, modal.api.deleteImage(imageId));
   } catch (error) {
-    if (!(error instanceof NotFoundError)) throw error;
+    if (error instanceof ModalDeadlineError) modal.log("modal:delete-image-timeout", { image: imageId, ms: error.ms });
+    else if (!(error instanceof NotFoundError)) throw error;
   }
 }
 
