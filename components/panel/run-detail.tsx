@@ -25,6 +25,7 @@ import { FullViewToggle, type FullView } from "./full-view";
 import { EvidenceSection } from "./evidence";
 import { AuditLog } from "./audit-log";
 import { formatUsd, runCost, runTitle, shortId } from "./format";
+import { AnswerQuestion } from "./inbox-actions";
 import { MergeButton } from "./merge-button";
 import { MergeDecisionSection } from "./merge-decision";
 import { ModelChip } from "./model-chip";
@@ -312,6 +313,9 @@ export function RunDetail({
             Question for you
           </div>
           <p className="mt-1 whitespace-pre-wrap">{job.question}</p>
+          <div className="mt-3">
+            <AnswerQuestion key={job.id} job={job} />
+          </div>
         </div>
       ) : null}
       {!job && run.stage === "waiting" && run.question && (
