@@ -17,7 +17,7 @@ const { isModalGone, modal, modalHost, realModal, sandboxName } = await import("
 const { enabledPstack, imageProblem, parseVersion, browserServer, pinnedVersions, PSTACK_PLUGIN, REPO_DIR } = await import("../lib/sandbox");
 const { config, launchSettings, threads } = await import("../runner/ops");
 const { launchInSandboxes, maybeStarted, recoverPending } = await import("../runner/launch");
-const { sandboxRuntime } = await import("../runner/sandbox");
+const { refreshWarmCheckout, sandboxRuntime } = await import("../runner/sandbox");
 const { readSettings, SETTINGS_ID, writeSettings } = await import("../lib/settings");
 
 modal.api = fakeModal;
@@ -44,6 +44,28 @@ fake.answer = (_sandbox, argv) => {
   return {};
 };
 assert.equal(host.t3, "t3");
+
+// A warm image's setup runs on what is left of its budget, which Modal only takes in whole seconds.
+{
+  const warm = new FakeSandbox("sb-warm");
+  sandboxes.set(warm.sandboxId, warm);
+  const failures: string[] = [];
+  const logged = sandboxRuntime.log;
+  const answered = fake.answer;
+  sandboxRuntime.log = (event, detail) => void (event === "sandbox:warm-setup-failed" && failures.push(String(detail.error)));
+  fake.answer = async (_sandbox, argv) => {
+    if (argv[0] === "bash") await new Promise((resolve) => setTimeout(resolve, 30));
+    return {};
+  };
+  await refreshWarmCheckout(modalHost(warm.sandboxId), "a/b", ["first", "second", "third"]);
+  sandboxRuntime.log = logged;
+  fake.answer = answered;
+  assert.deepEqual(failures, [], "a later setup command, run after the first took a few milliseconds, is not refused for its timeout");
+  const timeouts = warm.execs.filter((e) => e.argv[0] === "bash").map((e) => e.params?.timeoutMs);
+  assert.equal(timeouts.length, 3, "every setup command ran");
+  assert.ok(timeouts.every((t) => t !== undefined && t % 1000 === 0 && t <= 180_000), `each on a whole-second budget: ${timeouts}`);
+  await assert.rejects(warm.exec(["x"], { timeoutMs: 179_751 }), /multiple of 1000ms/, "the fake refuses what Modal refuses");
+}
 assert.deepEqual(await host.run("echo", ["hi"], { input: "in", cwd: "/w", timeoutMs: 1_000 }), { stdout: "hi", stderr: "warn" });
 assert.deepEqual(box.execs.at(-1), { argv: ["echo", "hi"], params: { workdir: "/w", timeoutMs: 1_000 }, input: "in", closed: true }, "argv, workdir, timeout, and stdin written then closed");
 await host.run("echo", []);
@@ -51,7 +73,7 @@ assert.deepEqual([box.execs.at(-1)!.params, box.execs.at(-1)!.closed], [{}, true
 const failed = (await host.run("fail", ["x"]).catch((error: unknown) => error)) as ExecError;
 assert.deepEqual([failed.code, failed.stdout, failed.stderr, failed.killed], [3, "partial", "boom", false], "a non-zero exit rejects like execFile");
 assert.equal(maybeStarted(failed), false, "and is a clear failure");
-const hung = (await host.run("hang", [], { timeoutMs: 50 }).catch((error: unknown) => error)) as ExecError;
+const hung = (await host.run("hang", [], { timeoutMs: 1_000 }).catch((error: unknown) => error)) as ExecError;
 assert.equal(hung.killed, true, "a timeout is marked killed");
 assert.equal(maybeStarted(hung), true, "and counts as maybe started");
 assert.equal(await host.exists("/there"), true);
