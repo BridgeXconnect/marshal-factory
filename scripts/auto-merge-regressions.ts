@@ -8,7 +8,7 @@ const { auditLog, events, jobEvidence, jobs, repoSettings, runs } = await import
 const { linearJob, usageRun } = await import("./fixtures");
 const { jobId } = await import("../lib/sources/shapes");
 const { SOURCES } = await import("../lib/sources");
-const { TEST_MACHINE_ID } = await import("../lib/config");
+const { TEST_COMMIT_EMAIL, TEST_MACHINE_ID } = await import("../lib/config");
 const { eventSchema } = await import("../lib/events");
 const { ingest } = await import("../lib/ingest");
 const { hosts } = await import("../lib/host");
@@ -375,7 +375,7 @@ try {
     `fetch origin main`,
     `worktree add -B factory/revert-5 ${dir} origin/main`,
     `rev-list --parents -n 1 m5`,
-    `-c user.name=marshal-factory -c user.email=marshal-factory@users.noreply.github.com revert --no-edit -m 1 m5`,
+    `-c user.name=marshal-factory -c user.email=${TEST_COMMIT_EMAIL} revert --no-edit -m 1 m5`,
     `rev-parse HEAD`,
     `-c credential.helper= -c push --force https://github.com/${MERGE_ONLY}.git HEAD:refs/heads/factory/revert-5`,
   ];

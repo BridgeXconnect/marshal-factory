@@ -11,6 +11,9 @@ export const CONFIG_PATH = process.env.MARSHAL_FACTORY_CONFIG ?? join(homedir(),
 /** The machine a regression run's runner code acts as, so the jobs a script creates can belong to it. */
 export const TEST_MACHINE_ID = "test-machine";
 
+/** The commit email a regression run's config names, so no regression asks gh for one. */
+export const TEST_COMMIT_EMAIL = "1+factory-test@users.noreply.github.com";
+
 /** The Modal image runners launch sandboxes from; scripts/sandbox-image.ts writes it. */
 export const SANDBOX_IMAGE_PATH = process.env.MARSHAL_FACTORY_SANDBOX_IMAGE ?? join(dirname(CONFIG_PATH), "sandbox-image.json");
 
@@ -77,6 +80,8 @@ export const factorySchema = z
     postMergeWatchMinutes: z.number().positive().default(60),
     /** Hours a Claude Code subagent worktree must sit untouched before cleanup considers it. */
     subagentIdleHours: z.number().nonnegative().default(6),
+    /** The email factory commits carry; unset, the runner derives <id>+<login>@users.noreply.github.com from the gh login at start-up. */
+    commitEmail: z.email().optional(),
     /** Target repos the factory works in; the installer adds each one. */
     repos: z.array(z.string()).default([]),
     /** The provider and model for new factory threads when the panel's settings hold none. */
@@ -132,7 +137,7 @@ export function loadConfig(): FactoryConfig {
       linearApiKey: "test-only",
       ingestUrl: "https://ingest.invalid/ingest",
       secret: "test-only",
-      factory: { machineId: TEST_MACHINE_ID },
+      factory: { machineId: TEST_MACHINE_ID, commitEmail: TEST_COMMIT_EMAIL },
     });
   }
   return configSchema.parse(JSON.parse(readFileSync(/* turbopackIgnore: true */ CONFIG_PATH, "utf8")));

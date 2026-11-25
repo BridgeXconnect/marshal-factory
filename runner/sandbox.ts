@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, realpathSync, renameSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
+import type { CommitAuthor } from "../lib/commit-author";
 import type { FactoryConfig, SandboxLimits } from "../lib/config";
 import type { ExecError } from "../lib/exec";
 import { sandboxTokens, type RepoName } from "../lib/github/app";
@@ -203,6 +204,8 @@ export type SandboxSetup = {
   /** Leases a slot when a job without one falls back to Codex; undefined when none is free. */
   leaseCodex?: () => Promise<CodexLogin | undefined>;
   githubToken: string;
+  /** Who the thread's commits name; set on every launch, since the image and warm images hold none. */
+  author: CommitAuthor;
   /** The hooks' ingest config; null for an onboarding run, which reports to no job. */
   ingest: string | null;
   /** The job the sandbox runs, which Codex's report server posts for; absent for an onboarding run. */
@@ -259,6 +262,8 @@ export async function setupSandbox(host: JobHost, setup: SandboxSetup, codexMode
   await host.writeFile(T3_SETTINGS, json(t3Settings(choice, hasClaude)));
   if (setup.ingest !== null) await writeSecretFile(host, INGEST_CONFIG_PATH, setup.ingest);
   await writeGithubToken(host, setup.githubToken);
+  await host.run("git", ["config", "--global", "user.name", setup.author.name], { timeoutMs: 30_000 });
+  await host.run("git", ["config", "--global", "user.email", setup.author.email], { timeoutMs: 30_000 });
   if (setup.warm) await refreshWarmCheckout(host, setup.repo, setup.warm.setup);
   else await host.run("git", ["clone", "--quiet", `https://github.com/${setup.repo}.git`, REPO_DIR], { timeoutMs: 300_000 });
   await wire(host);

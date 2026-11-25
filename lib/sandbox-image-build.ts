@@ -79,8 +79,8 @@ export const baseLayers = (limits: BuildLimits) => [
   install("/usr/local/bin/git-credential-factory", credentialHelper),
   install("/usr/local/bin/gh", ghWrapper),
   install("/usr/local/bin/factory-verify", verifyWrapper),
-  "RUN git config --global user.name marshal-factory && git config --global user.email marshal-factory@users.noreply.github.com" +
-    " && git config --global credential.https://github.com.helper factory && git config --global init.defaultBranch main",
+  // No commit identity here: each launch sets the runner's, so an image never holds a stale one.
+  "RUN git config --global credential.https://github.com.helper factory && git config --global init.defaultBranch main",
 ];
 
 export const openModalBuildSandbox: OpenBuildSandbox = async (limits, log) => {

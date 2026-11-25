@@ -11,6 +11,7 @@ import { modalSecretName, parseDetail, repoImage } from "../lib/onboarding";
 import { RECIPE_PATH, UNMERGED_RECIPE_PATH, type Recipe } from "../lib/recipe";
 import { listThreads, showThread, startThread as t3Start } from "../lib/t3-client";
 import { PENDING } from "./binding";
+import { commitAuthor } from "./commit-author";
 import { thisMachine } from "./heartbeat";
 import type { JobSource } from "../lib/sources/types";
 import type { Execution } from "../lib/execution";
@@ -472,6 +473,7 @@ export async function launchInSandboxes(pending: readonly LaunchEntry[], slot: L
             return leased ? loginOf(leased) : undefined;
           },
           githubToken,
+          author: await commitAuthor(),
           ingest: ingestConfig(config),
           job: { key: entry.key, attempt: entry.attempt },
           ...(start.warm && { warm: start.warm }),

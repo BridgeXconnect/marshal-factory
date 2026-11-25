@@ -11,7 +11,7 @@ const { db } = await import("../db/client");
 const { jobs, settings } = await import("../db/schema");
 const { linearJob } = await import("./fixtures");
 const { jobId } = await import("../lib/sources/shapes");
-const { TEST_MACHINE_ID } = await import("../lib/config");
+const { TEST_COMMIT_EMAIL, TEST_MACHINE_ID } = await import("../lib/config");
 const { HostGoneError, hosts, localHost } = await import("../lib/host");
 const { modal, modalHost, realModal, sandboxName } = await import("../lib/modal-host");
 const { enabledPstack, imageProblem, parseVersion, browserServer, pinnedVersions, PSTACK_PLUGIN, REPO_DIR } = await import("../lib/sandbox");
@@ -233,6 +233,8 @@ try {
   assert.ok(argvs.includes(`git clone --quiet https://github.com/ski043/factory-demo.git ${REPO_DIR}`));
   assert.ok(argvs.includes("ln -sfn /opt/marshal-factory /Users/someone/marshal-factory"), "the committed wiring's factory path links to the sandbox's");
   const order = (needle: string) => argvs.findIndex((a) => a.includes(needle));
+  assert.ok(argvs.includes("git config --global user.name marshal-factory") && argvs.includes(`git config --global user.email ${TEST_COMMIT_EMAIL}`), "the thread commits as the configured author");
+  assert.ok(order("git config --global user.email") < order("t3 thread start"), "set before the thread starts");
   assert.ok(order("git clone") < order("t3 serve") && order("t3 serve") < order("t3 project add") && order("t3 project add") < order("t3 thread start"), "clone, serve, project, then the thread");
   const startExec = sbA.execs.find((e) => e.argv[2] === "start")!;
   assert.deepEqual(startExec.argv, ["t3", "thread", "start", REPO_DIR, "-", "--worktree", "origin/main", "--branch", `factory/${keys[0]}`, "--title", `${keys[0]} t`, "--provider", "codex", "--model", "gpt-6-astra", "--json"]);

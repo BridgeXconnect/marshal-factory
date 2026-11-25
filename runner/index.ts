@@ -39,6 +39,8 @@ const { keepSubscribed } = await import("./realtime");
 type IntentRow = typeof intents.$inferSelect;
 
 const machine = await thisMachine();
+// Factory commits need an email an account owns; without one the runner stops here, before any job.
+await (await import("./commit-author")).commitAuthor();
 
 const log = (event: string, detail: Record<string, unknown> = {}) =>
   console.log(JSON.stringify({ at: new Date().toISOString(), event, ...detail }));

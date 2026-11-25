@@ -13,7 +13,7 @@ const { codexSlotLeases, intents, jobs, repoSettings } = await import("../db/sch
 type RepoRow = typeof repoSettings.$inferSelect;
 const { linearJob } = await import("./fixtures");
 const { jobId } = await import("../lib/sources/shapes");
-const { TEST_MACHINE_ID } = await import("../lib/config");
+const { TEST_COMMIT_EMAIL, TEST_MACHINE_ID } = await import("../lib/config");
 const { modal } = await import("../lib/modal-host");
 const recipes = await import("../lib/recipe");
 const { recipeHash } = await import("../lib/recipe-hash");
@@ -570,6 +570,7 @@ try {
   assert.deepEqual(warmBox.spec!.namedSecrets, [onboarding.modalSecretName(LAUNCH)], "with the repo's secret");
   const argvs = warmBox.execs.map((e) => e.argv.join(" "));
   assert.ok(!argvs.some((a) => a.startsWith("git clone")), "nothing is cloned");
+  assert.ok(argvs.includes(`git config --global user.email ${TEST_COMMIT_EMAIL}`), "a warm image's thread commits as the configured author too");
   assert.ok(argvs.includes(`git -C ${REPO_DIR} checkout --quiet -B main origin/main`), "the checkout moves to origin/main");
   assert.ok(argvs.includes(`bash -c ${recipe.setup[0]}`), "and setup runs again");
   assert.match(warmBox.execs.find((e) => e.argv[2] === "start")!.input, /setup recipe is \.factory\/setup\.json/, "the thread is told about the recipe");
